@@ -1,0 +1,120 @@
+name: vbb-data-validation
+
+x-spark-common: &spark-common
+  image: spark:3.5.8-scala2.12-java17-python3-ubuntu
+  restart: unless-stopped
+  networks:
+    - spark-network
+  volumes:
+    # Downloaded source data: static GTFS, historical delays, and samples.
+    - ./data:/opt/spark/work-dir/data
+
+    # PySpark exploration and validation scripts.
+    - ./streaming/spark_jobs:/opt/spark/work-dir/jobs
+
+    # Spark validation outputs: CSV, JSON, and Parquet.
+    - ./output:/opt/spark/work-dir/output
+
+services:
+  spark-master:
+    <<: *spark-common
+    container_name: vbb-spark-master
+    hostname: spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.master.Master
+      - --host
+      - spark-master
+      - --port
+      - "7077"
+      - --webui-port
+      - "8080"
+    environment:
+      SPARK_MASTER_HOST: spark-master
+      SPARK_MASTER_PORT: "7077"
+      SPARK_MASTER_WEBUI_PORT: "8080"
+    ports:
+      - "7077:7077"
+      - "8080:8080"
+
+  spark-worker:
+    <<: *spark-common
+    container_name: vbb-spark-worker
+    hostname: spark-worker
+    depends_on:
+      - spark-master
+    command:
+      - /opt/spark/bin/spark-class
+      - org.apache.spark.deploy.worker.Worker
+      - --webui-port
+      - "8081"
+      - --cores
+      - "10"
+      - --memory
+      - 8G
+      - spark://spark-master:7077
+    environment:
+      SPARK_WORKER_CORES: "10"
+      SPARK_WORKER_MEMORY: 8G
+      SPARK_WORKER_WEBUI_PORT: "8081"
+    ports:
+      - "8081:8081"
+
+  spark-client:
+    <<: *spark-common
+    container_name: vbb-spark-client
+    hostname: spark-client
+    depends_on:
+      - spark-master
+      - spark-worker
+    command: ["bash", "-lc", "tail -f /dev/null"]
+    environment:
+      PYSPARK_PYTHON: python3
+      SPARK_MASTER_URL: spark://spark-master:7077
+
+  spark-jupyter:
+    <<: *spark-common
+    container_name: vbb-spark-jupyter
+    hostname: spark-jupyter
+    user: root
+    working_dir: /opt/spark/work-dir
+    depends_on:
+      - spark-master
+      - spark-worker
+    environment:
+      SPARK_HOME: /opt/spark
+      PYSPARK_PYTHON: python3
+      PYSPARK_DRIVER_PYTHON: python3
+      SPARK_MASTER_URL: spark://spark-master:7077
+    volumes:
+      # Notebooks created in JupyterLab.
+      - ./notebooks:/opt/spark/work-dir/notebooks
+
+      # Same shared folders used by the Spark cluster.
+      - ./data:/opt/spark/work-dir/data
+      - ./streaming/spark_jobs:/opt/spark/work-dir/jobs
+      - ./output:/opt/spark/work-dir/output
+    command:
+      - bash
+      - -lc
+      - |
+        PY4J_ZIP="$$(find /opt/spark/python/lib -maxdepth 1 -name 'py4j-*.zip' -print -quit)" &&
+        test -n "$$PY4J_ZIP" &&
+        export PYTHONPATH="/opt/spark/python:$$PY4J_ZIP:$${PYTHONPATH:-}" &&
+        python3 -m pip install --no-cache-dir jupyterlab &&
+        python3 -m jupyter lab \
+          --ip=0.0.0.0 \
+          --port=8888 \
+          --no-browser \
+          --allow-root \
+          --ServerApp.root_dir=/opt/spark/work-dir \
+          --ServerApp.token='' \
+          --ServerApp.password=''
+    ports:
+      # Bound to localhost only; no token is required.
+      - "127.0.0.1:8888:8888"
+      - "127.0.0.1:4040:4040"
+
+networks:
+  spark-network:
+    driver: bridge
