@@ -1,0 +1,2 @@
+boto3
+huggingface_hub
