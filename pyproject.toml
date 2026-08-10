@@ -1,0 +1,23 @@
+[project]
+name = "db-transit-ops-delay-pipeline"
+version = "0.1.0"
+description = "Deutsche Bahn delay data platform: Medallion batch pipeline (Bronze/Silver/Gold) with dbt-redshift and reporting dashboards."
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+ingestion = [
+    "boto3",
+    "huggingface_hub",
+]
+quality = [
+    "great_expectations",
+    "pandas",
+    "pyarrow",
+]
+dev = [
+    "pytest",
+]
+
+[tool.setuptools.packages.find]
+include = ["ingestion*", "quality*", "batch*", "api*", "dashboard*", "ml*"]

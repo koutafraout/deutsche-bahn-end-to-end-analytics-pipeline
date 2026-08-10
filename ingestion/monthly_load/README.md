@@ -13,6 +13,9 @@ either a single month (`YYYY-MM`) or an inclusive range within one year
 (`YYYY-MM-MM`); repeat `--month` to mix specific months and/or ranges for a
 non-successive collection.
 
+Install deps: `pip install -e ".[ingestion]"` (or `uv pip install -e ".[ingestion]"`)
+from the repo root.
+
 ```bash
 # single month
 python -m ingestion.monthly_load.main --month 2026-07

@@ -10,6 +10,9 @@ in profiling, and `time` values falling inside their own source month.
 Every threshold traces back to `docs/data-profiling-2026-01-07.md` §3-§4,
 §12 — nothing here is a guessed bound.
 
+Install deps: `pip install -e ".[quality]"` (or `uv pip install -e ".[quality]"`)
+from the repo root.
+
 ```bash
 python -m quality.bronze_monthly.validate --month 2026-07
 python -m quality.bronze_monthly.validate --month 2026-01 --month 2026-02

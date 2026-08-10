@@ -22,8 +22,8 @@ import sys
 
 import great_expectations as gx
 import pandas as pd
+import pyarrow.fs as pafs
 import pyarrow.parquet as pq
-import s3fs
 
 from ingestion.monthly_load.ingest_monthly import (
     S3_BRONZE_BUCKET,
@@ -45,7 +45,7 @@ def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
     validate_month_format(month)
     key = build_s3_key(month)
     s3_path = f"{bucket}/{key}"
-    fs = s3fs.S3FileSystem()
+    fs = pafs.S3FileSystem()
 
     logger.info("checking s3://%s", s3_path)
     try:
@@ -71,7 +71,7 @@ def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
         return False
     logger.info("month=%s schema OK (%d columns)", month, len(actual_columns))
 
-    df = pd.read_parquet(f"s3://{s3_path}", columns=NOT_NULL_COLUMNS, filesystem=fs)
+    df = pd.read_parquet(s3_path, columns=NOT_NULL_COLUMNS, filesystem=fs)
 
     context = gx.get_context(mode="ephemeral")
     datasource = context.data_sources.add_pandas(f"bronze_monthly_{month}")
