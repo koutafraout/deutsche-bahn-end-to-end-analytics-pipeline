@@ -1,0 +1,43 @@
+version: 2
+
+models:
+  - name: stg_monthly_observations
+    description: >
+      Thin staging model over db_monthly.raw_observations: rename and cast
+      only, no business logic. Grain is still one row per source
+      observation (poll-and-snapshot) — the same train_line_ride_id +
+      train_line_station_num repeats across rows with evolving delay,
+      cancellation, and change-time values as the ride progresses. Grain
+      resolution (choosing one final state per ride-stop) happens in
+      int_observations_deduped, not here.
+    columns:
+      - name: id
+        description: Source-supplied row identifier. Unique across the full monthly table.
+        data_tests:
+          - unique
+          - not_null
+      - name: source_month
+        description: "Partition tag for the source monthly release, format YYYY-MM."
+        data_tests:
+          - not_null
+      - name: train_line_ride_id
+        description: >
+          Identifies one train ride. Not unique per row — a ride spans
+          many stations, and the same ride-stop is re-observed multiple
+          times as its operational state changes (poll-and-snapshot
+          source behavior).
+      - name: train_line_station_num
+        description: Ordinal position of this stop within the ride.
+      - name: observation_time
+        description: >
+          Renamed from the source's generic "time" column. Not
+          exclusively an arrival or departure timestamp — matches
+          departure_change_time, arrival_change_time, or both depending
+          on the row.
+      - name: delay_in_min
+        description: >
+          Delay in minutes as supplied by the source. Not yet
+          recomputed/validated against planned vs. actual times
+          (see int_observations_enriched, PROJECT_PLAN.md §6.5).
+      - name: is_canceled
+        description: Whether this observation reflects a canceled service.

@@ -1,0 +1,14 @@
+db_ops_analytics:
+  target: redshift
+  outputs:
+    redshift:
+      type: redshift
+      method: database
+      host: "{{ env_var('REDSHIFT_HOST') }}"
+      port: "{{ env_var('REDSHIFT_PORT', '5439') | as_number }}"
+      dbname: "{{ env_var('REDSHIFT_DBNAME', 'dev') }}"
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      schema: "{{ env_var('REDSHIFT_SCHEMA', 'dbt_dev') }}"
+      threads: 4
+      sslmode: require

@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: db_monthly
+    description: >
+      Landing schema in Redshift Serverless holding the monthly Deutsche
+      Bahn historical Parquet releases, COPY'd from the Bronze S3 layer
+      unchanged (one row per source observation, poll-and-snapshot grain —
+      not yet the reporting grain).
+    schema: db_monthly
+    tables:
+      - name: raw_observations
+        description: >
+          Union of all loaded monthly Deutsche Bahn Parquet releases
+          (Jan-Jul 2026 at time of writing), tagged with source_month.
+          17 source columns plus source_month. id is unique within this
+          table; train_line_ride_id + train_line_station_num repeats
+          across poll snapshots and is not yet the reporting grain.
+        columns:
+          - name: id
+            description: Source-supplied row identifier. Unique across the full table.
+            data_tests:
+              - unique
+              - not_null
+          - name: source_month
+            description: "Partition tag for the source monthly release, format YYYY-MM."
+            data_tests:
+              - not_null
