@@ -2,16 +2,10 @@
 
 A scheduled, incremental-batch data platform that turns Deutsche Bahn historical and API delay data into tested, modeled station/line/time performance datasets for daily and monthly reporting.
 
-> **Status: v0.2 — Monthly Bronze Pipeline & Warehouse Landing.**
->
-> The historical data assessment is complete, including the data catalog and
-> January–July 2026 profiling. The first production pipeline path is now
-> implemented:
->
-> **Hugging Face → S3 Bronze → Great Expectations → Redshift Serverless**
->
-> The next milestone is the dbt modeling layer:
-> staging → intermediate → Gold reporting marts.
+> **Status: v0.3 — Monthly pipeline landed through dbt staging.**
+> Hugging Face → S3 Bronze → Great Expectations → Redshift Serverless →
+> dbt staging is implemented and validated end to end for January–July
+> 2026 (101,702,091 rows). See [Status](#status) below for what's next.
 
 ---
 
@@ -42,565 +36,117 @@ The final platform is intended to support consistent delay reporting by:
 
 ## Stakeholders
 
-### Transport planners
-
-Use monthly reporting to:
-
-- identify long-term delay patterns;
-- compare stations and railway lines;
-- support timetable, capacity, and infrastructure planning.
-
-### Railway operations and performance teams
-
-Use daily reporting to:
-
-- monitor recent delays and cancellations;
-- investigate operational problems;
-- identify issues that persist across several days.
-
-### Railway performance analysts
-
-Use both daily and monthly views for operational monitoring and trend analysis.
+- **Transport planners** — monthly reporting to identify long-term delay
+  patterns, compare stations and lines, and support planning.
+- **Railway operations & performance teams** — daily reporting to monitor
+  recent delays/cancellations and investigate operational problems.
+- **Railway performance analysts** — both views, for operational
+  monitoring and trend analysis.
 
 ---
 
 ## Data sources
 
-The project uses the `piebro/deutsche-bahn-data` dataset as the historical
-reference source.
+- **Monthly historical archive** — [`piebro/deutsche-bahn-data`](https://huggingface.co/datasets/piebro/deutsche-bahn-data)
+  on Hugging Face, a monthly Parquet release, 17 columns, CC BY 4.0,
+  Germany-wide, available from July 2024 onward. Currently landed and
+  loaded for January–July 2026 (101,702,091 rows). This is the pipeline's
+  historical reporting source and future reconciliation reference.
+- **Raw Deutsche Bahn API** (`plan` + `fchg`, ~6-hourly) — planned, not yet
+  implemented.
 
-**Geographic scope:** Germany  
-**Historical availability:** July 2024 onward  
-**License:** CC BY 4.0
-
-### Monthly historical archive
-
-**Source:** [piebro/deutsche-bahn-data](https://huggingface.co/datasets/piebro/deutsche-bahn-data)
-
-Characteristics:
-
-- monthly Parquet release;
-- flat tabular structure;
-- 17 source columns;
-- historical reporting source;
-- future reconciliation reference.
-
-The current implemented pipeline contains:
-
-```text
-data-2026-01.parquet
-...
-data-2026-07.parquet
-```
-
-representing:
-
-```text
-101,702,091 source observations
-```
-
-across January–July 2026.
-
-### Raw Deutsche Bahn API
-
-Planned source:
-
-```text
-plan + fchg XML payloads
-```
-
-with approximately 6-hourly collection.
-
-**Status:** not yet implemented.
-
-The future API path will have its own structural parsing stage before
-converging with the monthly path in the shared dbt modeling layer.
+Schema details, the source-grain finding (one row = one snapshot, not one
+final state), and the full ingestion pipeline are documented in
+[docs/architecture.md](docs/architecture.md).
 
 ---
 
-# Architecture
-
-The project follows a **Medallion-inspired batch architecture** with clear
-separation between:
-
-- immutable raw storage;
-- structural data-quality validation;
-- warehouse landing;
-- semantic transformation;
-- business-ready reporting models.
-
-## Current implemented architecture
-
-```text
-                    DEUTSCHE BAHN
-                  MONTHLY DATA SOURCE
-                         │
-                         │
-                         ▼
-             Hugging Face Parquet archive
-             data-YYYY-MM.parquet
-                         │
-                         │
-                         │ Python ingestion
-                         ▼
-        ┌─────────────────────────────────────┐
-        │              AWS S3                 │
-        │              BRONZE                 │
-        │                                     │
-        │  bronze/monthly-raw/                │
-        │    year=2026/                       │
-        │      month=01/                      │
-        │      month=02/                      │
-        │      ...                            │
-        │      month=07/                      │
-        │                                     │
-        │  Raw Parquet preserved unchanged    │
-        └─────────────────┬───────────────────┘
-                          │
-                          │
-                          ▼
-        ┌─────────────────────────────────────┐
-        │       GREAT EXPECTATIONS            │
-        │       BRONZE VALIDATION             │
-        │                                     │
-        │  • file/readability checks          │
-        │  • schema checks                    │
-        │  • structural validation            │
-        │  • non-empty dataset checks         │
-        └─────────────────┬───────────────────┘
-                          │
-                    VALIDATION GATE
-                          │
-               ┌──────────┴──────────┐
-               │                     │
-            PASS ✅                FAIL ❌
-               │                     │
-               │                     ▼
-               │          ┌─────────────────────┐
-               │          │ STOP PIPELINE       │
-               │          │                     │
-               │          │ • no Redshift COPY │
-               │          │ • log failure       │
-               │          │ • keep raw S3 file │
-               │          │ • investigate      │
-               │          │ • reprocess later  │
-               │          └─────────────────────┘
-               │
-               ▼
-        ┌─────────────────────────────────────┐
-        │        REDSHIFT SERVERLESS          │
-        │                                     │
-        │ Namespace                           │
-        │ deutsche-bahn-pipeline              │
-        │                                     │
-        │ Workgroup                           │
-        │ deutsche-bahn-pipeline-wg           │
-        │                                     │
-        │ Database                            │
-        │ dev                                 │
-        └─────────────────┬───────────────────┘
-                          │
-                          │ COPY FORMAT AS PARQUET
-                          ▼
-        ┌─────────────────────────────────────┐
-        │            db_monthly               │
-        │                                     │
-        │        raw_observations             │
-        │                                     │
-        │ • 17 source columns                 │
-        │ • source_month                      │
-        │ • 101,702,091 rows                  │
-        │ • Jan–Jul 2026                      │
-        └─────────────────┬───────────────────┘
-                          │
-                          │
-                          ▼
-                 NEXT: dbt modeling
-```
-
----
-
-## Implemented monthly flow
-
-The currently working path is:
-
-```text
-Hugging Face
-      ↓
-Python monthly ingestion
-      ↓
-S3 Bronze
-      ↓
-Great Expectations
-      ↓
- ┌────┴────┐
- │         │
-PASS      FAIL
- │         │
- ▼         ▼
-COPY      Stop pipeline
- │        Log validation failure
- │        Preserve Bronze data
- ▼
-Redshift Serverless
-      ↓
-db_monthly.raw_observations
-```
-
-### S3 Bronze layout
-
-```text
-s3://deutsche-bahn-delay-data-lake/
-└── bronze/
-    ├── api-raw/
-    │
-    └── monthly-raw/
-        └── year=2026/
-            ├── month=01/
-            │   └── data-2026-01.parquet
-            ├── month=02/
-            │   └── data-2026-02.parquet
-            ├── month=03/
-            │   └── data-2026-03.parquet
-            ├── month=04/
-            │   └── data-2026-04.parquet
-            ├── month=05/
-            │   └── data-2026-05.parquet
-            ├── month=06/
-            │   └── data-2026-06.parquet
-            └── month=07/
-                └── data-2026-07.parquet
-```
-
-Bronze data is treated as **immutable**.
-
-A Great Expectations validation failure therefore does not delete or
-overwrite the source file. The pipeline stops before warehouse loading,
-records the validation failure, and preserves the Bronze object for
-investigation and reprocessing.
-
----
-
-# Redshift Serverless
-
-Current warehouse configuration:
-
-```text
-Namespace:
-deutsche-bahn-pipeline
-
-Workgroup:
-deutsche-bahn-pipeline-wg
-
-Database:
-dev
-
-Raw schema:
-db_monthly
-
-Raw table:
-db_monthly.raw_observations
-```
-
-The historical monthly files are loaded directly from S3 using Redshift
-`COPY ... FORMAT AS PARQUET`.
-
-The monthly Redshift landing table currently contains:
-
-```text
-101,702,091 rows
-```
-
-for January–July 2026.
-
-Validated monthly row counts:
-
-| Month | Rows |
-|---|---:|
-| 2026-01 | 15,582,748 |
-| 2026-02 | 13,721,520 |
-| 2026-03 | 15,016,329 |
-| 2026-04 | 14,149,788 |
-| 2026-05 | 14,427,217 |
-| 2026-06 | 14,752,336 |
-| 2026-07 | 14,052,153 |
-| **Total** | **101,702,091** |
-
-The `id` field has also been validated as unique:
-
-- within every loaded month;
-- across the full January–July 2026 Redshift table.
-
-`id` remains a **source snapshot identifier**, not the final business key.
-
----
-
-# Data quality strategy
-
-Data quality responsibilities are intentionally separated by layer.
-
-### Data profiling
-
-Development-time Spark profiling is used to discover the real behavior of
-the source data.
-
-Completed profiling includes:
-
-- schema stability;
-- null behavior;
-- temporal coverage;
-- station identity;
-- delay distributions;
-- timestamp semantics;
-- cancellation behavior;
-- ride-stop grain investigation;
-- snapshot repetition.
-
-Profiling is evidence for production rules, not production pipeline logic.
-
-### Great Expectations
-
-Great Expectations validates the **Bronze structural layer** before data is
-loaded into Redshift.
-
-Its responsibility is primarily:
-
-> Is the dataset that arrived structurally valid and safe to continue
-> processing?
-
-If validation fails:
-
-```text
-GE FAIL
-   ↓
-STOP
-   ↓
-No Redshift COPY
-   ↓
-Log validation result
-   ↓
-Preserve Bronze object
-   ↓
-Investigate / reprocess
-```
-
-### dbt tests
-
-dbt will later validate the **semantic/modeling layer**, including:
-
-- business-grain uniqueness;
-- deterministic snapshot deduplication;
-- delay calculation rules;
-- accepted values;
-- station/line dimensions;
-- reporting-mart assertions.
-
----
-
-# Important profiling finding: source grain
-
-The historical source is not one final row per train-stop.
-
-Instead:
-
-> **One source row represents one captured snapshot of a train-stop state.**
-
-The same:
-
-```text
-train_line_ride_id
-+
-train_line_station_num
-```
-
-can appear repeatedly as operational information changes.
-
-Examples of changing state include:
-
-- delay;
-- arrival/departure timestamps;
-- cancellation status.
-
-Therefore the future reporting grain will be:
-
-> **One selected final state per train ride and station sequence position.**
-
-This transformation will be implemented in dbt intermediate models rather
-than in Bronze ingestion.
-
----
-
-# Planned architecture
-
-The implemented monthly path will eventually extend into the following
-architecture:
-
-```text
-MONTHLY HISTORICAL PATH
-
-Hugging Face
-      ↓
-Python ingestion
-      ↓
-S3 Bronze
-      ↓
-Great Expectations
-      ↓
-Redshift raw landing
-      ↓
-dbt staging
-      ↓
-dbt intermediate
-      ↓
-dbt Gold marts
-      ↓
-Dashboard
-
-
-FUTURE API PATH
-
-Deutsche Bahn plan/fchg API
-      ↓
-API ingestion
-      ↓
-S3 Bronze
-      ↓
-Great Expectations
-      ↓
-Structural parsing
-      ↓
-Canonical observations
-      ↓
-Redshift
-      ↓
-shared dbt intermediate layer
-      ↓
-dbt Gold marts
-      ↓
-Daily dashboard
-```
-
-Both paths will eventually converge into the same semantic reporting model.
-
----
-
-# Current implementation status
+## Status
 
 | Component | Status |
 |---|---|
-| Local Docker/Spark environment | ✅ Complete |
-| Data catalog | ✅ Complete |
-| Jan–Jul 2026 data profiling | ✅ Complete |
-| Monthly Python ingestion | ✅ Implemented |
-| S3 Bronze storage | ✅ Implemented |
-| Great Expectations Bronze validation | ✅ Implemented |
-| Validation failure gate | ✅ Implemented |
-| Redshift Serverless setup | ✅ Implemented |
-| S3 → Redshift Parquet COPY | ✅ Implemented |
-| Jan–Jul 2026 warehouse load | ✅ Validated |
-| dbt source/staging | 🔜 Next |
-| dbt deduplication | ⏳ Planned |
-| dbt enrichment | ⏳ Planned |
-| Gold reporting marts | ⏳ Planned |
-| Raw API ingestion | ⏳ Planned |
+| Monthly ingestion → S3 Bronze → Great Expectations → Redshift | ✅ Implemented |
+| dbt staging (`stg_monthly_observations`) | ✅ Implemented |
+| dbt intermediate + Gold marts | 🔜 Next |
+| Raw API ingestion, structural parser | ⏳ Planned |
 | Airflow orchestration | ⏳ Planned |
-| Streamlit dashboard | ⏳ Planned |
-| Terraform | ⏳ Later hardening phase |
+| FastAPI + Streamlit dashboard | ⏳ Planned |
 | ML delay prediction | ⏳ Advanced / stretch |
 
----
-
-# Next milestone — dbt modeling
-
-The next implementation phase starts from:
-
-```text
-db_monthly.raw_observations
-```
-
-and introduces:
-
-```text
-db_monthly.raw_observations
-        ↓
-dbt source
-        ↓
-stg_monthly_observations
-        ↓
-int_observations_deduped
-        ↓
-int_observations_enriched
-        ↓
-Gold marts
-```
-
-### `stg_monthly_observations`
-
-Thin source-aligned staging model:
-
-- rename/cast only;
-- no deduplication;
-- no reporting calculations;
-- source-level dbt tests.
-
-### `int_observations_deduped`
-
-Resolve repeated train-stop snapshots using a deterministic precedence rule.
-
-Expected business key:
-
-```text
-train_line_ride_id
-+
-train_line_station_num
-+
-source_month
-```
-
-### `int_observations_enriched`
-
-Add shared semantic fields such as:
-
-- service date;
-- service hour;
-- weekday;
-- delay calculations;
-- on-time flag;
-- station coverage era;
-- canonical station/line attributes.
-
-### Gold marts
-
-Planned reporting models include:
-
-```text
-mart_daily_station_perf
-mart_monthly_station_perf
-
-mart_daily_line_perf
-mart_monthly_line_perf
-```
-
-These will become the contract consumed by the reporting dashboard.
+See [docs/architecture.md](docs/architecture.md) for the implemented vs.
+target architecture, and [docs/adr/](docs/adr/) for why each tool was
+chosen.
 
 ---
 
-## Quickstart
+## Tech stack
 
-Start the local development environment:
+| Area | Tool |
+|---|---|
+| Ingestion | Python 3.11, boto3, huggingface_hub |
+| Bronze storage | AWS S3 |
+| Bronze validation | Great Expectations |
+| Warehouse | Redshift Serverless |
+| Transformations | dbt (`dbt-redshift`) |
+| Local profiling | PySpark, JupyterLab (Docker) |
+| Dependency management | uv |
+| Testing | pytest |
 
-```bash
-docker compose up -d
-```
+Planned, not yet implemented: Airflow (orchestration), FastAPI (reporting
+API), Streamlit (dashboard). See [docs/architecture.md](docs/architecture.md)
+for the full target architecture.
 
-Historical data assessment notebooks are available under:
+---
 
-```text
-notebooks/data-assessment/monthly_catalog_profiling/
-```
+## Setup
 
-The monthly ingestion pipeline loads source Parquet files into the project's
-S3 Bronze layer.
+**Prerequisites:** Python 3.11, [`uv`](https://docs.astral.sh/uv/), Docker
++ Docker Compose, an AWS account with an S3 bucket and a Redshift
+Serverless workgroup reachable from your machine.
+
+1. Install dependencies:
+
+   ```bash
+   uv sync --extra ingestion --extra quality --extra warehouse --extra dev
+   ```
+
+2. Configure environment variables:
+
+   ```bash
+   cp .env.example .env
+   # fill in your S3 bucket, AWS credentials, and Redshift connection details
+   ```
+
+3. Land a month of historical data in Bronze:
+
+   ```bash
+   uv run python -m ingestion.monthly_load.main --month 2026-07
+   ```
+
+4. Validate it:
+
+   ```bash
+   uv run python -m quality.bronze_monthly.validate --month 2026-07
+   ```
+
+5. Load it into Redshift and build the warehouse:
+
+   ```bash
+   # COPY step is currently manual — see docs/runbook.md §2.3
+   cd warehouse/dbt && uv run dbt build
+   ```
+
+6. (Optional) Start the local Spark/Jupyter profiling environment:
+
+   ```bash
+   docker compose up -d
+   ```
+
+   Historical data assessment notebooks live under
+   `notebooks/data-assessment/monthly_catalog_profiling/`.
+
+Full operational detail — failure handling, required Redshift grants,
+troubleshooting — is in [docs/runbook.md](docs/runbook.md).
 
 Production orchestration with Airflow is not yet implemented; the current
 pipeline components are being validated individually before orchestration is
@@ -608,29 +154,13 @@ added.
 
 ---
 
-## Development approach
+## Documentation
 
-The project is intentionally built incrementally.
-
-Each layer is implemented and validated before orchestration is added:
-
-```text
-Source
-  ↓
-Ingestion
-  ↓
-Bronze storage
-  ↓
-Bronze validation
-  ↓
-Warehouse landing
-  ↓
-Semantic modeling
-  ↓
-Reporting
-  ↓
-Orchestration / hardening
-```
+- [docs/architecture.md](docs/architecture.md) — data architecture, pipeline
+  diagrams, and tool choices
+- [docs/runbook.md](docs/runbook.md) — operational manual: running the
+  pipeline, handling failures, managing the environment
+- [docs/adr/](docs/adr/) — architecture decision records
 
 This README evolves with the actual implementation rather than documenting
 components that have not yet been built.
