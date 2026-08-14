@@ -15,6 +15,9 @@ quality = [
     "pandas",
     "pyarrow",
 ]
+warehouse = [
+    "dbt-redshift",
+]
 dev = [
     "pytest",
 ]
