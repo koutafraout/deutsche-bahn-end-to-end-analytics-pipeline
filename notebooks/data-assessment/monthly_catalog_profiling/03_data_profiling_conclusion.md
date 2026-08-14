@@ -228,6 +228,19 @@ The `id` field is:
 - unique for every row;
 - never duplicated within a monthly file.
 
+This was additionally verified across the **whole table, all months combined**, after loading the monthly raw data from S3 into Redshift:
+
+```sql
+-- Is id unique across the WHOLE table (all months combined)?
+SELECT
+    COUNT(*)           AS total_rows,
+    COUNT(DISTINCT id) AS total_distinct_ids
+FROM db_monthly.raw_observations;
+-- total_rows = total_distinct_ids for the whole table
+```
+
+`total_rows` equaled `total_distinct_ids`, confirming `id` is unique not just within a single monthly file but across the entire loaded dataset.
+
 Therefore:
 
 > `id` is a reliable technical row identifier for one captured observation.

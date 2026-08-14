@@ -596,7 +596,7 @@ docker compose up -d
 Historical data assessment notebooks are available under:
 
 ```text
-notebooks/data-assessment/deutsche_bahn/
+notebooks/data-assessment/monthly_catalog_profiling/
 ```
 
 The monthly ingestion pipeline loads source Parquet files into the project's
