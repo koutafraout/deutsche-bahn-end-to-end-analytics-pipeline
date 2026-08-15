@@ -29,12 +29,20 @@ renamed as (
         -- added to epoch. Redshift's interval literals don't support a
         -- microsecond unit, so seconds is the finest granularity available.
         -- Values represent Europe/Berlin wall-clock time with no tz info,
-        -- so the naive (tz-less) result is intentional here.
-        timestamp 'epoch' + ("time"::bigint / 1000000000.0) * interval '1 second' as "time",
-        timestamp 'epoch' + (arrival_planned_time::bigint / 1000000000.0) * interval '1 second' as arrival_planned_time,
-        timestamp 'epoch' + (arrival_change_time::bigint / 1000000000.0) * interval '1 second' as arrival_change_time,
-        timestamp 'epoch' + (departure_planned_time::bigint / 1000000000.0) * interval '1 second' as departure_planned_time,
-        timestamp 'epoch' + (departure_change_time::bigint / 1000000000.0) * interval '1 second' as departure_change_time
+        -- so the naive (tz-less) result is intentional here. round() the
+        -- fractional-seconds division before applying the interval:
+        -- floating-point division of nanoseconds by 1e9 occasionally lands
+        -- just under a whole second (e.g. 23:33:59.999999 instead of
+        -- 23:34:00), which is a decode artifact, not real sub-second data
+        -- (profiling confirmed source timestamps are whole-minute
+        -- granularity) — but it silently undercounts minute-boundary-based
+        -- calculations like datediff(minute, ...) downstream if left
+        -- unrounded.
+        timestamp 'epoch' + round("time"::bigint / 1000000000.0) * interval '1 second' as "time",
+        timestamp 'epoch' + round(arrival_planned_time::bigint / 1000000000.0) * interval '1 second' as arrival_planned_time,
+        timestamp 'epoch' + round(arrival_change_time::bigint / 1000000000.0) * interval '1 second' as arrival_change_time,
+        timestamp 'epoch' + round(departure_planned_time::bigint / 1000000000.0) * interval '1 second' as departure_planned_time,
+        timestamp 'epoch' + round(departure_change_time::bigint / 1000000000.0) * interval '1 second' as departure_change_time
 
     from source
 

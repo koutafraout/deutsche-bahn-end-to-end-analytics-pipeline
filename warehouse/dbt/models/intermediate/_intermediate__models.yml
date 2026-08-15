@@ -1,0 +1,118 @@
+version: 2
+
+models:
+  - name: int_observations_unioned
+    description: >
+      Union of all conformed ingestion sources into one shared grain,
+      tagged by ingestion_source. Currently a pass-through of
+      stg_monthly_observations only, since stg_api_observations does not
+      exist yet — the model exists now so the union point is fixed by the
+      architecture and doesn't move when the API path lands (CLAUDE.md
+      §4). Grain is still one row per source observation (poll-and-snapshot);
+      deduplication happens downstream in int_observations_deduped, not
+      here.
+    columns:
+      - name: id
+        description: Source-supplied row identifier. Not unique across sources once the API path is added — do not use as a cross-source key.
+        data_tests:
+          - not_null
+      - name: ingestion_source
+        description: Which source path produced this row.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["monthly", "api"]
+
+  - name: int_observations_deduped
+    description: >
+      Resolves int_observations_unioned's poll-and-snapshot rows down to
+      one row per (train_line_ride_id, train_line_station_num,
+      source_month) — the real business grain, not id. Keeps the snapshot
+      with the latest "time" per grain key; id is used only as a secondary
+      tiebreak for the rare case of two rows sharing an identical "time",
+      since 100% of duplicate groups in profiling span multiple ids with
+      no inherent recency ordering. Materialized as a table (not the
+      staging/unioned default of view): this does a window-function pass
+      over the full observation volume and is read repeatedly by every
+      downstream model, so materializing once avoids recomputing it on
+      every query.
+    columns:
+      - name: train_line_ride_id
+        description: Part of the resolved business grain. Identifies one train ride.
+        data_tests:
+          - not_null
+      - name: train_line_station_num
+        description: Part of the resolved business grain. Ordinal position of this stop within the ride.
+        data_tests:
+          - not_null
+      - name: source_month
+        description: Part of the resolved business grain.
+        data_tests:
+          - not_null
+      - name: id
+        description: Retained from the winning snapshot row; not itself the grain key.
+        data_tests:
+          - not_null
+
+  - name: int_observations_enriched
+    description: >
+      Adds shared semantic fields on top of int_observations_deduped:
+      recomputed delay (departure-authoritative, arrival-fallback,
+      matching the source's own "time" derivation pattern), on-time flag,
+      service date/hour/weekday, and station_coverage_era. This is the
+      final shared fact grain every Gold mart reads from — one row per
+      (train_line_ride_id, train_line_station_num, source_month).
+      Materialized as a table for the same reason as
+      int_observations_deduped. station_name is treated as canonical for
+      reporting; xml_station_name is carried through as a diagnostic
+      column (row-level mismatch between the two runs ~28% every month —
+      a deliberate precedence choice, not noise). line_number is null for
+      long-distance/international train_type values by design — see the
+      assert_int_observations_enriched_line_number_null_matches_train_type
+      test rather than a not_null column test.
+    columns:
+      - name: delay_basis
+        description: >
+          Which event ("departure" or "arrival") delay_recomputed_min was
+          derived from. "departure" whenever both departure_planned_time
+          and departure_change_time are present; "arrival" otherwise
+          (e.g. final-destination stops with no further departure).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["departure", "arrival"]
+      - name: delay_recomputed_min
+        description: >
+          Authoritative delay in minutes, recomputed from planned vs.
+          change time for the resolved delay_basis event — not the
+          source's published delay_in_min (kept as a diagnostic
+          pass-through column). Departure-based recomputation matches the
+          published value 100% of the time in every profiled month;
+          arrival-based is non-authoritative supplementary data.
+        data_tests:
+          - not_null
+      - name: is_on_time
+        description: "delay_recomputed_min < 6 (DB's own on-time convention; median observed delay is 1 minute)."
+        data_tests:
+          - not_null
+      - name: service_date
+        description: Calendar date derived from "time".
+        data_tests:
+          - not_null
+      - name: service_hour
+        description: Hour of day (0-23) derived from "time".
+        data_tests:
+          - not_null
+      - name: station_coverage_era
+        description: >
+          "limited_coverage" before 2 Nov 2025 (~100 largest stations
+          collected), "full_coverage" from that date on (all reachable
+          stations). Must be used to scope any trend/comparison query so
+          it never silently spans both eras.
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ["limited_coverage", "full_coverage"]
