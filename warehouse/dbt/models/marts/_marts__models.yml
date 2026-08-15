@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: dim_station
+    description: >
+      One row per station, keyed on eva. station_name is canonical
+      (chosen in int_observations_enriched); xml_station_name variation
+      is summarized as a diagnostic count, not carried row-by-row.
+    columns:
+      - name: eva
+        description: Station identifier. Primary key.
+        data_tests:
+          - unique
+          - not_null
+      - name: station_name
+        description: Canonical station name.
+        data_tests:
+          - not_null
+
+  - name: dim_train_line
+    description: >
+      One row per (train_type, line_number). line_number is null for
+      long-distance/international train_type values by design — that's a
+      valid grain value, not a missing one.
+    columns:
+      - name: train_type
+        description: "Train category, e.g. ICE, IC, RE, S."
+        data_tests:
+          - not_null
+
+  - name: mart_monthly_station_perf
+    description: >
+      Station-month delay/on-time/cancellation performance. Full refresh.
+      Delay and on-time measures exclude canceled rows; observation_count
+      and cancellation_rate include them. eligible_for_ranking flags
+      station-months with at least 30 observations — filter on it before
+      building "worst/best performer" rankings. Any trend/comparison
+      query must scope itself to a single station_coverage_era.
+    columns:
+      - name: eva
+        description: Station identifier, part of the grain.
+        data_tests:
+          - not_null
+      - name: service_month
+        description: First day of the service month, part of the grain.
+        data_tests:
+          - not_null
+      - name: observation_count
+        description: All observations, including canceled.
+        data_tests:
+          - not_null
+      - name: eligible_for_ranking
+        description: "observation_count >= 30."
+        data_tests:
+          - not_null
