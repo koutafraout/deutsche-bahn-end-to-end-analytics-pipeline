@@ -53,3 +53,32 @@ models:
         description: "observation_count >= 30."
         data_tests:
           - not_null
+
+  - name: mart_monthly_line_perf
+    description: >
+      (train_type, line_number)-month delay/on-time/cancellation
+      performance. Mirrors mart_monthly_station_perf exactly: same
+      cancellation-denominator rule (delay/on-time measures exclude
+      canceled rows; observation_count/cancellation_rate include them),
+      same eligible_for_ranking floor (>= 30 observations). line_number
+      is null for long-distance/international train_type values by
+      design — those rows are kept, not filtered out, so this mart can
+      answer "do long-distance categories differ from regional ones?"
+      from the same table as ordinary line-level questions.
+    columns:
+      - name: train_type
+        description: Part of the grain.
+        data_tests:
+          - not_null
+      - name: service_month
+        description: First day of the service month, part of the grain.
+        data_tests:
+          - not_null
+      - name: observation_count
+        description: All observations, including canceled.
+        data_tests:
+          - not_null
+      - name: eligible_for_ranking
+        description: "observation_count >= 30."
+        data_tests:
+          - not_null
