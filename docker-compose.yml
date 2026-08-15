@@ -9,9 +9,6 @@ x-spark-common: &spark-common
     # Downloaded source data: static GTFS, historical delays, and samples.
     - ./data:/opt/spark/work-dir/data
 
-    # PySpark exploration and validation scripts.
-    - ./streaming/spark_jobs:/opt/spark/work-dir/jobs
-
     # Spark validation outputs: CSV, JSON, and Parquet.
     - ./output:/opt/spark/work-dir/output
 
@@ -60,18 +57,6 @@ services:
     ports:
       - "8081:8081"
 
-  spark-client:
-    <<: *spark-common
-    container_name: vbb-spark-client
-    hostname: spark-client
-    depends_on:
-      - spark-master
-      - spark-worker
-    command: ["bash", "-lc", "tail -f /dev/null"]
-    environment:
-      PYSPARK_PYTHON: python3
-      SPARK_MASTER_URL: spark://spark-master:7077
-
   spark-jupyter:
     <<: *spark-common
     container_name: vbb-spark-jupyter
@@ -92,7 +77,6 @@ services:
 
       # Same shared folders used by the Spark cluster.
       - ./data:/opt/spark/work-dir/data
-      - ./streaming/spark_jobs:/opt/spark/work-dir/jobs
       - ./output:/opt/spark/work-dir/output
     command:
       - bash
