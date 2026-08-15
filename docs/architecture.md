@@ -14,7 +14,7 @@ Structured Streaming in this design.
 | Bronze | S3, immutable | Raw source bytes, unchanged, partitioned |
 | Silver | Redshift Serverless, dbt staging + intermediate | Conform, dedupe, compute business rules |
 | Gold | Redshift Serverless, dbt marts | Reporting-ready star schema |
-| Serving | FastAPI + Streamlit (planned) | Reads Gold only |
+| Serving | Metabase (dashboard, connects directly to Gold) | Reads Gold only |
 
 ## 2. Currently implemented path (monthly)
 
@@ -32,10 +32,12 @@ flowchart TD
     D["Redshift Serverless<br/>manual COPY ... FORMAT AS PARQUET<br/>dev.db_monthly.raw_observations"]
     D -->|"dbt (warehouse/dbt)"| E
     E["dbt staging<br/>stg_monthly_observations<br/>rename/cast only"]
-    E --> F["NEXT: dbt intermediate<br/>(not yet built)"]
+    E --> F["dbt intermediate<br/>(union → dedup → enrich)"]
+    F --> G["Gold marts<br/>dim_station · dim_train_line<br/>mart_monthly_station_perf · mart_monthly_line_perf"]
+    G --> H["NEXT: Metabase dashboard<br/>(not yet built)"]
 
     style X fill:#f8d7da,stroke:#c0392b,color:#611a15
-    style F fill:#fff3cd,stroke:#b7891f,color:#5c4813
+    style H fill:#fff3cd,stroke:#b7891f,color:#5c4813
 ```
 
 **Bronze validation gate checks, in order:**
@@ -68,7 +70,7 @@ flowchart TD
     ST2 --> INT
     INT["dbt intermediate — shared core, written ONCE<br/>int_observations_unioned<br/>→ int_observations_deduped<br/>→ int_observations_enriched<br/><sub>(delay recompute, on-time flag, service<br/>date/hour/weekday, station_coverage_era)</sub>"] --> GOLD
 
-    GOLD["Gold — dbt marts<br/>mart_daily_station_perf · mart_daily_line_perf (incremental)<br/>mart_monthly_station_perf · mart_monthly_line_perf (full refresh)<br/>dim_station · dim_train_line"] --> SERVE["FastAPI (reporting endpoints)<br/>Streamlit (daily + monthly)"]
+    GOLD["Gold — dbt marts<br/>mart_daily_station_perf · mart_daily_line_perf (incremental)<br/>mart_monthly_station_perf · mart_monthly_line_perf (full refresh)<br/>dim_station · dim_train_line"] --> SERVE["Metabase dashboard<br/>(connects directly to Gold)"]
     GOLD -.stretch.-> ML["ML delay prediction<br/>(Gold feature_*)"]
 ```
 
@@ -94,7 +96,7 @@ marts (row-count deltas, assertions).
 | **PySpark** | Structural parsing of the raw API's `plan`/`fchg` payloads only | Parsing and joining nested XML/JSON is awkward in SQL and natural in Spark; not used on the monthly path (already flat/typed) and not used for business logic |
 | **Great Expectations** | Bronze structural gate | Distinct concern from dbt tests — "did the payload arrive intact and match the expected shape," not "is the business rule correct" |
 | **Airflow** | Orchestration (planned) | Scheduled batch DAGs fit the 6-hourly/monthly cadence; no need for a streaming scheduler |
-| **FastAPI + Streamlit** | Serving (planned) | Thin reporting layer reading Gold marts only — no business logic lives in the API or dashboard |
+| **Metabase** | Serving (planned) | Connects directly to Gold marts; no business logic lives in the dashboard — `avg_delay_min`, `on_time_rate`, `eligible_for_ranking`, etc. are used as computed, never redefined in Metabase |
 
 ## 5. Key architectural rules
 
