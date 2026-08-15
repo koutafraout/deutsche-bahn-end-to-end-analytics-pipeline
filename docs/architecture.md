@@ -20,92 +20,69 @@ Structured Streaming in this design.
 
 Everything below is running code, not a plan.
 
-```text
-Hugging Face (piebro/deutsche-bahn-data)
-  monthly_processed_data/data-YYYY-MM.parquet
-                    │
-                    │  ingestion/monthly_load  (Python, boto3 + huggingface_hub)
-                    ▼
-  S3 Bronze — s3://<bucket>/bronze/monthly-raw/year=YYYY/month=MM/
-              raw Parquet, byte-for-byte, skip-if-exists unless --force
-                    │
-                    │  quality/bronze_monthly  (Great Expectations)
-                    ▼
-        ┌─────────────────────────────┐
-        │  Bronze validation gate     │
-        │  1. valid Parquet, readable │
-        │  2. row_count >= 1          │
-        │  3. schema == 17 columns    │
-        │  4. not-null on 10 columns  │
-        │     confirmed always-       │
-        │     populated by profiling  │
-        │  5. time within source month│
-        └──────────────┬──────────────┘
-                PASS │       │ FAIL
-                     │       └──► stop; log; keep Bronze object;
-                     │            no Redshift COPY (investigate/reprocess)
-                     ▼
-  Redshift Serverless — manual `COPY ... FORMAT AS PARQUET`
-  dev.db_monthly.raw_observations (17 source columns + source_month,
-  BIGINT nanosecond-epoch timestamps preserved as-landed, not auto-decoded)
-                    │
-                    │  dbt (warehouse/dbt)
-                    ▼
-  dbt staging — stg_monthly_observations
-    • 1:1 rename/cast only, no business logic
-    • decodes nanosecond BIGINT → naive TIMESTAMP (Europe/Berlin wall clock)
-    • not_null + unique(id) schema tests
-                    │
-                    ▼
-              NEXT: dbt intermediate (not yet built)
+```mermaid
+flowchart TD
+    A["Hugging Face<br/>monthly_processed_data/data-YYYY-MM.parquet"]
+    A -->|"ingestion/monthly_load<br/>(Python: boto3 + huggingface_hub)"| B
+    B["S3 Bronze<br/>bronze/monthly-raw/year=YYYY/month=MM/<br/>raw Parquet, byte-for-byte, skip-if-exists"]
+    B -->|"quality/bronze_monthly<br/>(Great Expectations)"| C
+    C{"Bronze validation gate"}
+    C -->|FAIL| X["Stop pipeline<br/>log · keep Bronze object · no COPY<br/>investigate / reprocess"]
+    C -->|PASS| D
+    D["Redshift Serverless<br/>manual COPY ... FORMAT AS PARQUET<br/>dev.db_monthly.raw_observations"]
+    D -->|"dbt (warehouse/dbt)"| E
+    E["dbt staging<br/>stg_monthly_observations<br/>rename/cast only"]
+    E --> F["NEXT: dbt intermediate<br/>(not yet built)"]
+
+    style X fill:#f8d7da,stroke:#c0392b,color:#611a15
+    style F fill:#fff3cd,stroke:#b7891f,color:#5c4813
 ```
+
+**Bronze validation gate checks, in order:**
+
+1. Object is valid, readable Parquet
+2. Row count ≥ 1
+3. Schema is exactly the 17 confirmed columns, in order
+4. 10 columns confirmed always-populated by profiling are still non-null
+5. `time` values fall inside their own source month
+
+**Landing table notes:** `raw_observations` holds the 17 source columns
+plus `source_month`; the five timestamp columns land as raw
+nanosecond-epoch `BIGINT`, not auto-decoded by the `COPY`.
 
 Validated as of the last load: 101,702,091 rows across January–July 2026,
 `id` confirmed unique within and across all loaded months.
 
 ## 3. Target architecture
 
-```text
-  ══════════════════════ SOURCES ══════════════════════
-  HF monthly Parquet (1×/month)       DB raw API: plan + fchg (6-hourly)
-          │                                    │
-  ═════════════════ BRONZE — S3, immutable ════════════════
-  bronze/monthly-raw/year=/month=/    bronze/api-raw/year=/month=/day=/hour=/
-          │                                    │
-  ══════ STRUCTURAL LAYER — Spark (parse & conform ONLY) ══════
-   (no Spark job — already tabular,     spark_parse_api: parse plan+fchg,
-    COPY straight to Redshift)          join by train/station, explode to
-                                        one row/train-stop, cast to
-                                        canonical columns → Parquet → S3
-          │                                    │
-          │                             COPY → Redshift
-          └────────────────┬───────────────────┘
-                            ▼
-  ═══ dbt STAGING — thin, 1:1 with source, rename/cast only ═══
-     stg_monthly_observations         stg_api_observations
-                            │
-                            ▼
-  ═══ dbt INTERMEDIATE — shared core, written ONCE ═══
-     int_observations_unioned → int_observations_deduped →
-     int_observations_enriched (delay recompute, on-time flag,
-     service date/hour/weekday, station_coverage_era flag)
-                            │
-                            ▼
-  ══════════ GOLD — dbt marts on Redshift Serverless ══════════
-   mart_daily_station_perf / mart_daily_line_perf (incremental)
-   mart_monthly_station_perf / mart_monthly_line_perf (full refresh)
-   dim_station, dim_train_line
-                            │
-                            ▼
-        FastAPI (reporting endpoints)  ·  Streamlit (daily + monthly)
-              [stretch] Gold feature_* → ML delay prediction
+```mermaid
+flowchart TD
+    S1["HF monthly Parquet<br/>1×/month"] --> B1["Bronze — S3<br/>bronze/monthly-raw/year=/month="]
+    S2["DB raw API: plan + fchg<br/>~6-hourly"] --> B2["Bronze — S3<br/>bronze/api-raw/year=/month=/day=/hour="]
 
-  Airflow: api_pull (6-hourly) · monthly_load · spark_parse · dbt build ·
-           monthly_reconcile
-  Great Expectations: Bronze — freshness, status_code, non-empty payload
-  dbt tests: staging (not-null, types) · intermediate (key uniqueness,
-             delay sanity bounds) · marts (row-count deltas, assertions)
+    B1 -->|"already tabular<br/>COPY straight to Redshift"| ST1["dbt staging<br/>stg_monthly_observations"]
+    B2 -->|"Spark: spark_parse_api<br/>parse plan+fchg, join by train/station,<br/>explode to 1 row/train-stop, cast columns"| SP["Structural layer<br/>canonical columns → Parquet → S3"]
+    SP -->|COPY| ST2["dbt staging<br/>stg_api_observations"]
+
+    ST1 --> INT
+    ST2 --> INT
+    INT["dbt intermediate — shared core, written ONCE<br/>int_observations_unioned<br/>→ int_observations_deduped<br/>→ int_observations_enriched<br/><sub>(delay recompute, on-time flag, service<br/>date/hour/weekday, station_coverage_era)</sub>"] --> GOLD
+
+    GOLD["Gold — dbt marts<br/>mart_daily_station_perf · mart_daily_line_perf (incremental)<br/>mart_monthly_station_perf · mart_monthly_line_perf (full refresh)<br/>dim_station · dim_train_line"] --> SERVE["FastAPI (reporting endpoints)<br/>Streamlit (daily + monthly)"]
+    GOLD -.stretch.-> ML["ML delay prediction<br/>(Gold feature_*)"]
 ```
+
+Both staging models are deliberately thin (rename/cast only) — the union
+of both sources happens *inside* dbt intermediate, so downstream rules are
+written exactly once.
+
+**Cross-cutting, scheduled by Airflow:** `api_pull` (6-hourly) ·
+`monthly_load` · `spark_parse` · `dbt build` · `monthly_reconcile`.
+
+**Data quality, split by layer:** Great Expectations gates Bronze
+(freshness, status code, non-empty payload); dbt tests gate staging
+(not-null, types), intermediate (key uniqueness, delay sanity bounds), and
+marts (row-count deltas, assertions).
 
 ## 4. Why each tool was chosen
 
@@ -125,8 +102,8 @@ Validated as of the last load: 101,702,091 rows across January–July 2026,
   "make it tabular and match the canonical schema." Dedup, delay
   recomputation, dimensions, and source precedence all live in dbt
   intermediate — never in the structural parser.
-- **Both sources are unioned inside dbt intermediate**, not upstream — this
-  makes "shared logic, written once" structural, not a matter of
+- **Both sources are unioned inside dbt intermediate**, not upstream —
+  this makes "shared logic, written once" structural, not a matter of
   discipline.
 - **Bronze is immutable.** A validation failure stops the pipeline before
   the Redshift `COPY`; it never deletes or mutates the landed object.
@@ -139,19 +116,9 @@ Validated as of the last load: 101,702,091 rows across January–July 2026,
 
 ## 6. Known data-quality realities carried through the design
 
-- The publicly documented monthly schema (16 columns) is stale — the
-  actual files have 17 columns (`train_name` replaced by `train_number` +
-  `line_number`). Schema is checked as a hard gate on every load, not
-  assumed.
-- Source grain is **snapshot-level**, not final-state: the same
-  `train_line_ride_id` + `train_line_station_num` can appear multiple
-  times as delay, timestamps, and cancellation status evolve.
-  Deduplication to one row per train-stop happens in
-  `int_observations_deduped` (not yet built), never in Bronze or staging.
-- A station-coverage break exists in the source history (a smaller set of
-  major stations before a given date, all reachable stations after) and
-  must be carried as a `station_coverage_era` flag so trend charts don't
-  silently compare incomparable periods.
-- Timestamps land in Redshift as raw nanosecond-epoch `BIGINT` and are
-  decoded to naive (Europe/Berlin wall-clock) `TIMESTAMP` in staging —
-  keeping the raw landing table byte-faithful to Bronze.
+| Reality | How the design handles it |
+|---|---|
+| The publicly documented monthly schema (16 columns) is stale — actual files have 17 (`train_name` replaced by `train_number` + `line_number`) | Schema is checked as a hard gate on every load, never assumed |
+| Source grain is **snapshot-level**, not final-state — the same `train_line_ride_id` + `train_line_station_num` can appear multiple times as delay, timestamps, and cancellation status evolve | Deduplication to one row per train-stop happens in `int_observations_deduped` (not yet built), never in Bronze or staging |
+| A station-coverage break exists in the source history (a smaller set of major stations before a given date, all reachable stations after) | Carried through as a `station_coverage_era` flag so trend charts never silently compare incomparable periods |
+| Timestamps arrive as raw nanosecond-epoch integers | Land in Redshift as `BIGINT`, decoded to naive (Europe/Berlin wall-clock) `TIMESTAMP` in staging — keeping the raw landing table byte-faithful to Bronze |
