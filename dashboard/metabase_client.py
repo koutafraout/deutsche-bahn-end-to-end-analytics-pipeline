@@ -95,13 +95,26 @@ def build_field_id_map(metadata: dict) -> dict[tuple[str, str], int]:
     return field_map
 
 
-def get_or_create_dashboard(name: str, description: str) -> tuple[int, bool]:
+def get_or_create_collection(name: str, description: str) -> int:
+    collections = call("GET", "/api/collection")
+    for coll in collections:
+        if coll.get("name") == name and not coll.get("archived"):
+            logger.info("collection %r already exists (id=%s), reusing", name, coll["id"])
+            return coll["id"]
+    logger.info("creating collection %r", name)
+    result = call("POST", "/api/collection", {"name": name, "description": description})
+    return result["id"]
+
+
+def get_or_create_dashboard(name: str, description: str, collection_id: int | None = None) -> tuple[int, bool]:
     """Returns (dashboard_id, already_existed)."""
     dashboards = call("GET", "/api/dashboard")
     for dash in dashboards:
         if dash.get("name") == name and not dash.get("archived"):
             return dash["id"], True
-    result = call("POST", "/api/dashboard", {"name": name, "description": description})
+    result = call("POST", "/api/dashboard", {
+        "name": name, "description": description, "collection_id": collection_id,
+    })
     return result["id"], False
 
 
@@ -124,38 +137,38 @@ def create_card(database_id: int, name: str, sql: str, template_tags: dict,
     return result["id"]
 
 
-def field_filter_tag(name: str, display_name: str, field_id: int, widget_type: str) -> dict:
+def field_filter_tag(name: str, display_name: str, field_id: int, widget_type: str,
+                      alias: str | None = None, default=None, required: bool | None = None) -> dict:
     import uuid
-    return {
+    tag = {
         "id": str(uuid.uuid4()), "name": name, "display-name": display_name,
         "type": "dimension", "dimension": ["field", field_id, None],
-        "widget-type": widget_type, "default": None,
+        "widget-type": widget_type, "default": default,
     }
+    if alias is not None:
+        tag["alias"] = alias
+    if required is not None:
+        tag["required"] = required
+    return tag
 
 
-def text_variable_tag(name: str, display_name: str, default: str | None = None) -> dict:
-    import uuid
+def text_dashcard(dashcard_id: int, tab_id: int, col: int, row: int, size_x: int, size_y: int,
+                   text: str, heading: bool = False) -> dict:
+    """A virtual (no card_id) dashcard rendering static heading/text markdown."""
+    settings = {
+        "dashcard.background": False,
+        "virtual_card": {"name": None, "display": "heading" if heading else "text",
+                          "visualization_settings": {}, "archived": False},
+        "text": text,
+    }
+    if not heading:
+        settings["text.align_vertical"] = "top"
+        settings["text.align_horizontal"] = "left"
     return {
-        "id": str(uuid.uuid4()), "name": name, "display-name": display_name,
-        "type": "text", "default": default,
+        "id": dashcard_id, "dashboard_tab_id": tab_id, "col": col, "row": row,
+        "size_x": size_x, "size_y": size_y, "visualization_settings": settings,
     }
 
 
 def pm_dim(param_id: str, tag_name: str) -> dict:
     return {"parameter_id": param_id, "target": ["dimension", ["template-tag", tag_name]]}
-
-
-def pm_var(param_id: str, tag_name: str) -> dict:
-    return {"parameter_id": param_id, "target": ["variable", ["template-tag", tag_name]]}
-
-
-def crossfilter_click(mapping: dict[str, str]) -> dict:
-    """mapping: {dashboard_parameter_id: source_column_name}"""
-    return {
-        "type": "crossfilter",
-        "parameterMapping": {
-            pid: {"id": pid, "source": {"type": "column", "id": col, "name": col},
-                  "target": {"type": "parameter", "id": pid}}
-            for pid, col in mapping.items()
-        },
-    }
