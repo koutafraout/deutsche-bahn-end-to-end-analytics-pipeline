@@ -28,6 +28,19 @@ models:
         data_tests:
           - not_null
 
+  - name: dim_service_month
+    description: >
+      One row per distinct service_month present in
+      mart_monthly_station_perf. Backs the month/year filter widgets on
+      the Metabase dashboard (dashboard/setup_metabase.py) — not a
+      general-purpose calendar dimension.
+    columns:
+      - name: service_month
+        description: First day of the service month. Primary key.
+        data_tests:
+          - unique
+          - not_null
+
   - name: mart_monthly_station_perf
     description: >
       Station-month delay/on-time/cancellation performance. Full refresh.
