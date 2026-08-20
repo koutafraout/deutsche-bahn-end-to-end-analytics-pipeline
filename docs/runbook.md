@@ -117,20 +117,30 @@ resolved.
 
 ### 2.3 Load Bronze into Redshift
 
-Not yet automated — currently a manual step. From a Redshift SQL client
-connected as an admin/owner of `db_monthly`:
-
-```sql
-COPY db_monthly.raw_observations
-FROM 's3://<bucket>/bronze/monthly-raw/year=<YYYY>/month=<MM>/data-<YYYY>-<MM>.parquet'
-IAM_ROLE '<redshift-s3-read-role-arn>'
-FORMAT AS PARQUET;
+```bash
+uv run python -m warehouse.redshift_load.main --month 2026-07
 ```
 
-Only run this **after** step 2.2 passes for that month. `raw_observations`
+Only run this **after** step 2.2 passes for that month. Idempotent by
+skipping, not reloading — a month already present in `raw_observations`
+is left as-is (no Redshift compute spent) unless `--force` is passed:
+
+```bash
+uv run python -m warehouse.redshift_load.main --month 2026-07 --force
+```
+
+Use `--force` only when the Bronze source for that month changed (e.g.
+after re-landing it with `ingestion.monthly_load.main --force`) — it
+deletes the month's existing rows before reloading. `raw_observations`
 declares the five timestamp columns as `BIGINT` (not `TIMESTAMP`) so the
 Parquet nanosecond-epoch values land unchanged — decoding happens in dbt
-staging, not at `COPY` time.
+staging, not at `COPY` time. `source_month` is derived from the `"time"`
+column after `COPY` (see `warehouse/redshift_load/load_monthly.py`), not
+from the S3 partition.
+
+Needs `REDSHIFT_LOADER_USER`/`REDSHIFT_LOADER_PASSWORD` (write access to
+`db_monthly` — deliberately separate from `REDSHIFT_USER`, dbt's
+read-only login there) and `REDSHIFT_S3_IAM_ROLE` set in `.env`.
 
 ### 2.4 Build the warehouse (dbt)
 
@@ -148,15 +158,28 @@ not yet built — see `architecture.md` §3 for the target shape.
 ### 2.5 Local Spark / profiling environment
 
 For development-time profiling only — not part of the production
-pipeline:
+pipeline (Airflow never talks to Spark). Opt-in via a Compose
+[profile](https://docs.docker.com/compose/how-tos/profiles/), so a plain
+`docker compose up` (used to run the orchestrated pipeline) never starts
+it:
 
 ```bash
-docker compose up -d
+docker compose --profile profiling up -d
 ```
 
 This brings up a Spark master/worker/client and a JupyterLab instance
 (bound to `127.0.0.1:8888`, no token). Profiling notebooks live under
 `notebooks/data-assessment/`.
+
+**Memory:** `spark-worker` is configured for `SPARK_WORKER_MEMORY: 8G`,
+sized assuming Spark runs *alone* — not alongside the rest of this stack
+(Airflow/Metabase/both Postgres instances), which typically uses another
+3-4 GB by itself. Before profiling, either stop the rest of the stack
+(`docker compose stop` for the non-profiling services) or increase Docker
+Desktop's memory allocation (Settings → Resources → Memory) to
+comfortably exceed 8G plus that baseline — otherwise large profiling
+jobs risk being OOM-killed by the Docker VM (silent `-9`/`137` exit,
+no Python traceback).
 
 ## 3. Handling failures
 
@@ -165,7 +188,7 @@ This brings up a Spark master/worker/client and a JupyterLab instance
 | HF download fails / times out | `ingestion.monthly_load.main` raises | Re-run the same command — it's idempotent (skips already-landed months) once the download succeeds. Check `HF_REPO_ID`/`HF_MONTHLY_SUBFOLDER` if the file genuinely doesn't exist upstream yet. |
 | S3 upload fails | `ingestion.monthly_load.main` raises (boto3 exception) | Check AWS credentials and bucket permissions; re-run — no partial state is left because the object is only considered "landed" once the upload completes. |
 | Great Expectations validation fails | `quality.bronze_monthly.validate` logs `FAIL` and exits non-zero | **Do not COPY that month into Redshift.** Read the logged reason (missing/corrupt Parquet, schema mismatch, unexpected nulls, or `time` values outside the source month). Investigate the source file; if it's a genuine upstream schema change, this needs a code change to `EXPECTED_COLUMNS`/`NOT_NULL_COLUMNS`, not a bypass. The Bronze object is preserved either way, so reprocessing after a fix doesn't require re-downloading. |
-| Redshift `COPY` fails | SQL client error | Common causes: wrong S3 path/partition, IAM role missing S3 read access, or a schema mismatch between the Parquet file and `raw_observations`'s DDL. Never widen the table's column types to "make it work" without confirming against the actual 17-column schema first. |
+| Redshift `COPY` fails | `warehouse.redshift_load.main` raises (rolls back — no partial load left) | Common causes: wrong `REDSHIFT_S3_IAM_ROLE` (missing S3 read access), or a schema mismatch between the Parquet file and `raw_observations`'s DDL. Never widen the table's column types to "make it work" without confirming against the actual 17-column schema first. |
 | `permission denied for schema db_monthly` | `dbt debug` / `dbt build` | `GRANT USAGE ON SCHEMA db_monthly TO dbt_user;` |
 | `permission denied for relation raw_observations` | `dbt build` | `GRANT SELECT ON TABLE db_monthly.raw_observations TO dbt_user;` — note this grant does **not** survive a drop/recreate of the table; re-run it after any DDL change to `raw_observations`. |
 | `permission denied for database dev` | `dbt build`/`dbt run` | Needs both `GRANT TEMP ON DATABASE dev TO dbt_user;` and `GRANT CREATE ON DATABASE dev TO dbt_user;` — `SELECT` and schema ownership alone are not sufficient. |
@@ -204,9 +227,10 @@ This brings up a Spark master/worker/client and a JupyterLab instance
   path.
 - The structural parser (Spark) that conforms the API payloads to the
   canonical schema.
-- dbt intermediate models (union, dedup, delay recompute, dimensions) and
-  Gold marts.
-- Airflow orchestration — all steps above are run manually from the CLI.
+- Airflow orchestration for the API/reconciliation legs (`api_pull`,
+  `spark_parse`, `monthly_reconcile`) — the monthly leg (land → validate →
+  COPY → dbt staging/intermediate/marts) is orchestrated by the
+  `db_monthly_pipeline` DAG (`airflow/dags/monthly_pipeline_dag.py`).
 - The FastAPI reporting service and Streamlit dashboard.
 - Automated `COPY` from S3 to Redshift (currently a manual SQL step, §2.3).
 - Monthly reconciliation against the official Hugging Face release.

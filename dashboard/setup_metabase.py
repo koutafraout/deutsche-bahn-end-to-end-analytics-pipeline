@@ -1454,7 +1454,7 @@ AND m.service_month = p.selected_month;''',
     ),
     dict(
         key='s_vs_network_delay', tab='stations', pos=(0, 10, 12, 6), live_id=62,
-        name='Station vs Network Average Delay',
+        name='Station vs Network Average Delay (min)',
         description='Compares the selected station’s monthly weighted average delay with the Deutsche Bahn network average throughout the selected year.',
         display='area',
         tags=[
@@ -1535,7 +1535,7 @@ ORDER BY s.service_month;''',
     ),
     dict(
         key='s_vs_network_ontime', tab='stations', pos=(12, 10, 12, 6), live_id=63,
-        name='Station vs Network On-Time Rate',
+        name='Station vs Network On-Time Rate (%)',
         description='Compares the selected station’s monthly on-time rate with the Deutsche Bahn network average throughout the selected year.',
         display='line',
         tags=[
@@ -1610,7 +1610,7 @@ ORDER BY s.service_month;''',
     ),
     dict(
         key='s_vs_network_cancel', tab='stations', pos=(0, 16, 12, 6), live_id=64,
-        name='Station vs Network Cancellation Rate',
+        name='Station vs Network Cancellation Rate (%)',
         description='Compares the selected station’s monthly cancellation rate with the Deutsche Bahn network average throughout the selected year.',
         display='line',
         tags=[
@@ -1679,7 +1679,7 @@ ORDER BY s.service_month;''',
     ),
     dict(
         key='s_delay_profile', tab='stations', pos=(12, 16, 12, 6), live_id=65,
-        name='Station Delay Profile Over Time',
+        name='Station Delay Profile Over Time (min)',
         description='Shows how the selected station’s average, median, and 90% delay threshold change throughout the selected year.',
         display='line',
         tags=[
@@ -1732,7 +1732,7 @@ TEXT_BLOCKS = [
 ]
 
 
-def create_all_cards(db_id: int, f: dict[tuple[str, str], int]) -> dict[str, int]:
+def create_all_cards(db_id: int, f: dict[tuple[str, str], int], collection_id: int) -> dict[str, int]:
     """f: field id map. Returns {logical_key: card_id}."""
     cards = {}
     for spec in CARDS:
@@ -1747,6 +1747,7 @@ def create_all_cards(db_id: int, f: dict[tuple[str, str], int]) -> dict[str, int
         cards[spec["key"]] = create_card(
             db_id, spec["name"], sql, tags, spec["display"],
             visualization_settings=spec["viz_settings"], description=spec["description"],
+            collection_id=collection_id,
         )
     return cards
 
@@ -1797,7 +1798,7 @@ def main() -> int:
     if tabs is None:
         return 0  # already existed, nothing more to do
 
-    cards = create_all_cards(db_id, field_map)
+    cards = create_all_cards(db_id, field_map, collection_id)
     dashcards = assemble_dashcards(tabs, cards)
 
     result = call("PUT", f"/api/dashboard/{dash_id}", {
