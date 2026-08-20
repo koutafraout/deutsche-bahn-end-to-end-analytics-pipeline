@@ -120,12 +120,13 @@ def get_or_create_dashboard(name: str, description: str, collection_id: int | No
 
 def create_card(database_id: int, name: str, sql: str, template_tags: dict,
                  display: str, visualization_settings: dict | None = None,
-                 description: str | None = None) -> int:
+                 description: str | None = None, collection_id: int | None = None) -> int:
     payload = {
         "name": name,
         "description": description,
         "display": display,
         "visualization_settings": visualization_settings or {},
+        "collection_id": collection_id,
         "dataset_query": {
             "type": "native",
             "native": {"query": sql, "template-tags": template_tags},
