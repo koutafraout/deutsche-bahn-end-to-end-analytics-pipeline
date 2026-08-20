@@ -41,7 +41,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 
-def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
+def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> tuple[bool, int]:
+    """Returns (passed, row_count). row_count is 0 if the object couldn't be read."""
     validate_month_format(month)
     key = build_s3_key(month)
     s3_path = f"{bucket}/{key}"
@@ -52,12 +53,12 @@ def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
         parquet_file = pq.ParquetFile(s3_path, filesystem=fs)
     except Exception:
         logger.exception("month=%s FAIL: object missing or not valid Parquet", month)
-        return False
+        return False, 0
 
     row_count = parquet_file.metadata.num_rows
     if row_count < 1:
         logger.error("month=%s FAIL: row count is %d, expected >= 1", month, row_count)
-        return False
+        return False, row_count
     logger.info("month=%s row_count=%d", month, row_count)
 
     actual_columns = parquet_file.schema_arrow.names
@@ -68,7 +69,7 @@ def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
             EXPECTED_COLUMNS,
             actual_columns,
         )
-        return False
+        return False, row_count
     logger.info("month=%s schema OK (%d columns)", month, len(actual_columns))
 
     df = pd.read_parquet(s3_path, columns=NOT_NULL_COLUMNS, filesystem=fs)
@@ -84,10 +85,10 @@ def validate_month(month: str, *, bucket: str = S3_BRONZE_BUCKET) -> bool:
 
     if not result.success:
         logger.error("month=%s FAIL: expectation suite failed\n%s", month, result)
-        return False
+        return False, row_count
 
     logger.info("month=%s PASS: all Bronze quality checks green", month)
-    return True
+    return True, row_count
 
 
 def parse_args() -> argparse.Namespace:
@@ -105,12 +106,20 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     all_passed = True
+    last_row_count = 0
     for month in args.months:
-        if not validate_month(month):
-            all_passed = False
+        passed, row_count = validate_month(month)
+        all_passed = all_passed and passed
+        last_row_count = row_count
 
     if not all_passed:
         sys.exit(1)
+
+    # Last stdout line only, so BashOperator's default XCom push (which
+    # captures the last line of stdout) carries the row count without
+    # any of the logging noise above. Only meaningful for a single month.
+    if len(args.months) == 1:
+        print(f"ROW_COUNT={last_row_count}")
 
 
 if __name__ == "__main__":

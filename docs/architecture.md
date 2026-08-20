@@ -29,7 +29,7 @@ flowchart TD
     C{"Bronze validation gate"}
     C -->|FAIL| X["Stop pipeline<br/>log · keep Bronze object · no COPY<br/>investigate / reprocess"]
     C -->|PASS| D
-    D["Redshift Serverless<br/>manual COPY ... FORMAT AS PARQUET<br/>dev.db_monthly.raw_observations"]
+    D["Redshift Serverless<br/>COPY ... FORMAT AS PARQUET (warehouse/redshift_load)<br/>dev.db_monthly.raw_observations"]
     D -->|"dbt (warehouse/dbt)"| E
     E["dbt staging<br/>stg_monthly_observations<br/>rename/cast only"]
     E --> F["dbt intermediate<br/>(union → dedup → enrich)"]

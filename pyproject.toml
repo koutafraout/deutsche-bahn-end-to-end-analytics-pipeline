@@ -17,10 +17,11 @@ quality = [
 ]
 warehouse = [
     "dbt-redshift",
+    "redshift-connector",
 ]
 dev = [
     "pytest",
 ]
 
 [tool.setuptools.packages.find]
-include = ["ingestion*", "quality*", "batch*", "api*", "dashboard*", "ml*"]
+include = ["ingestion*", "quality*", "batch*", "api*", "dashboard*", "ml*", "warehouse*"]

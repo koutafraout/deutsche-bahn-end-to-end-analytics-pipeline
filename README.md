@@ -79,6 +79,26 @@ chosen.
 
 ---
 
+## Local dashboard development (cost control)
+
+Iterating on the Metabase dashboard (adding cards, tweaking filters,
+re-running the setup script) means Metabase — and often Redshift
+Serverless behind it — churns on every save/sync. That drove up compute
+cost against the project's $160 AWS credit during dashboard development,
+since Redshift Serverless resumes from auto-pause on every query.
+
+**Solution:** mirror the Gold marts into a local Postgres container
+(`docker compose up -d postgres`) and point Metabase's database
+connection at it while doing dashboard/layout work, instead of hitting
+Redshift Serverless directly. Full runbook, including the Redshift
+quirks hit along the way (`COPY` has no `TO STDOUT`, `information_schema`
+unsupported on Redshift Serverless), in
+[dashboard/local-postgres-mirror.md](dashboard/local-postgres-mirror.md).
+The production dashboard still reads Redshift Gold marts directly — this
+mirror is dev-only, not part of the pipeline.
+
+---
+
 ## Tech stack
 
 | Area | Tool |
@@ -132,14 +152,15 @@ Serverless workgroup reachable from your machine.
 5. Load it into Redshift and build the warehouse:
 
    ```bash
-   # COPY step is currently manual — see docs/runbook.md §2.3
+   uv run python -m warehouse.redshift_load.main --month 2026-07
    cd warehouse/dbt && uv run dbt build
    ```
 
-6. (Optional) Start the local Spark/Jupyter profiling environment:
+6. (Optional) Start the local Spark/Jupyter profiling environment — opt-in,
+   not part of the pipeline, so it needs its own Compose profile:
 
    ```bash
-   docker compose up -d
+   docker compose --profile profiling up -d
    ```
 
    Historical data assessment notebooks live under
