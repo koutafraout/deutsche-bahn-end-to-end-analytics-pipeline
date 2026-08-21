@@ -18,7 +18,9 @@ Structured Streaming in this design.
 
 ## 2. Currently implemented path (monthly)
 
-Everything below is running code, not a plan.
+Everything below is running code, not a plan, and is orchestrated
+end-to-end by the `db_monthly_pipeline` Airflow DAG
+(`airflow/dags/monthly_pipeline_dag.py`).
 
 ```mermaid
 flowchart TD
@@ -32,12 +34,11 @@ flowchart TD
     D["Redshift Serverless<br/>COPY ... FORMAT AS PARQUET (warehouse/redshift_load)<br/>dev.db_monthly.raw_observations"]
     D -->|"dbt (warehouse/dbt)"| E
     E["dbt staging<br/>stg_monthly_observations<br/>rename/cast only"]
-    E --> F["dbt intermediate<br/>(union → dedup → enrich)"]
-    F --> G["Gold marts<br/>dim_station · dim_train_line<br/>mart_monthly_station_perf · mart_monthly_line_perf"]
-    G --> H["NEXT: Metabase dashboard<br/>(not yet built)"]
+    E --> F["dbt intermediate<br/>int_observations_unioned → deduped → enriched"]
+    F --> G["Gold marts<br/>dim_station · dim_train_line · dim_service_month<br/>mart_monthly_station_perf · mart_monthly_line_perf"]
+    G --> H["Metabase dashboard<br/>(dashboard/setup_metabase.py)"]
 
     style X fill:#f8d7da,stroke:#c0392b,color:#611a15
-    style H fill:#fff3cd,stroke:#b7891f,color:#5c4813
 ```
 
 **Bronze validation gate checks, in order:**
@@ -54,6 +55,10 @@ nanosecond-epoch `BIGINT`, not auto-decoded by the `COPY`.
 
 Validated as of the last load: 101,702,091 rows across January–July 2026,
 `id` confirmed unique within and across all loaded months.
+
+**Not yet built:** the raw-API/daily leg (`api_pull`, `spark_parse`,
+`stg_api_observations`, daily marts) and `monthly_reconcile` — see
+§3 below for the target shape.
 
 ## 3. Target architecture
 
@@ -95,8 +100,8 @@ marts (row-count deltas, assertions).
 | **dbt-redshift** | All business logic — dedup, delay calc, dimensions, marts | Version-controlled SQL with built-in testing, docs, and lineage; both ingestion paths converge here so rules are written exactly once instead of duplicated per source |
 | **PySpark** | Structural parsing of the raw API's `plan`/`fchg` payloads only | Parsing and joining nested XML/JSON is awkward in SQL and natural in Spark; not used on the monthly path (already flat/typed) and not used for business logic |
 | **Great Expectations** | Bronze structural gate | Distinct concern from dbt tests — "did the payload arrive intact and match the expected shape," not "is the business rule correct" |
-| **Airflow** | Orchestration (planned) | Scheduled batch DAGs fit the 6-hourly/monthly cadence; no need for a streaming scheduler |
-| **Metabase** | Serving (planned) | Connects directly to Gold marts; no business logic lives in the dashboard — `avg_delay_min`, `on_time_rate`, `eligible_for_ranking`, etc. are used as computed, never redefined in Metabase |
+| **Airflow** | Orchestration | Scheduled batch DAGs fit the 6-hourly/monthly cadence; no need for a streaming scheduler |
+| **Metabase** | Serving | Connects directly to Gold marts; no business logic lives in the dashboard — `avg_delay_min`, `on_time_rate`, `eligible_for_ranking`, etc. are used as computed, never redefined in Metabase |
 
 ## 5. Key architectural rules
 
@@ -116,7 +121,26 @@ marts (row-count deltas, assertions).
   semantics; a monthly reconciliation job checks correctness against the
   official Hugging Face release.
 
-## 6. Known data-quality realities carried through the design
+## 6. Cost control: Redshift Serverless and the local Postgres mirror
+
+The project runs on a fixed $160 AWS credit. Redshift Serverless
+auto-pauses when idle, matching the batch cadence — but it resumes (and
+bills) on *every* query, including every Metabase dashboard sync or card
+edit made while iterating on layout. That churn during dashboard
+development pushed actual spend to ~$214, over budget.
+
+**Mitigation:** `docker-compose.yml` includes a local Postgres service
+(`postgres`, distinct from `airflow-postgres`) that mirrors the Gold
+marts schema-faithfully from Redshift. Metabase is pointed at this local
+mirror while iterating on dashboard layout/filters, so only the
+scheduled pipeline and final verification touch Redshift Serverless.
+This is a disposable dev-time mirror, not a second warehouse target —
+Redshift Serverless remains the only warehouse per
+[ADR: Redshift Serverless as warehouse](adr/0002-redshift-serverless-as-warehouse.md).
+Full mirroring steps, including the Redshift quirks hit along the way:
+[dashboard/local-postgres-mirror.md](../dashboard/local-postgres-mirror.md).
+
+## 7. Known data-quality realities carried through the design
 
 | Reality | How the design handles it |
 |---|---|

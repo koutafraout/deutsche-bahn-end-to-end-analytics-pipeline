@@ -151,9 +151,12 @@ uv run dbt build            # run + test all models
 uv run dbt build --select stg_monthly_observations   # a single model
 ```
 
-Currently implemented: `stg_monthly_observations` (rename/cast only, plus
-`not_null` and `unique` schema tests). Intermediate and mart models are
-not yet built — see `architecture.md` §3 for the target shape.
+Currently implemented: `stg_monthly_observations` (staging) →
+`int_observations_unioned`/`_deduped`/`_enriched` (intermediate) →
+`dim_station`/`dim_train_line`/`dim_service_month`/
+`mart_monthly_station_perf`/`mart_monthly_line_perf` (Gold marts), all
+with schema tests. Daily marts and the API-sourced staging model are not
+yet built — see `architecture.md` §3 for the target shape.
 
 ### 2.5 Local Spark / profiling environment
 
@@ -203,7 +206,13 @@ no Python traceback).
   is passed, and validation is read-only.
 - **Cost control:** Redshift Serverless auto-pauses when idle — avoid
   scripts that poll it continuously, which would keep it resumed. Watch
-  the AWS Budget alert configured on the account.
+  the AWS Budget alert configured on the account. The $160 credit was
+  exceeded (~$214 spent) by Redshift resuming on every Metabase dashboard
+  sync during dashboard development — mitigated by mirroring Gold marts
+  into the local `postgres` Compose service and pointing Metabase there
+  while iterating; see
+  [`dashboard/local-postgres-mirror.md`](../dashboard/local-postgres-mirror.md)
+  and `architecture.md` §6.
 - **Secrets:** only `.env.example` (placeholder values) is committed.
   Real credentials live in `.env` (git-ignored) or environment variables
   injected by the shell/orchestrator — never hardcoded.
@@ -231,6 +240,7 @@ no Python traceback).
   `spark_parse`, `monthly_reconcile`) — the monthly leg (land → validate →
   COPY → dbt staging/intermediate/marts) is orchestrated by the
   `db_monthly_pipeline` DAG (`airflow/dags/monthly_pipeline_dag.py`).
-- The FastAPI reporting service and Streamlit dashboard.
-- Automated `COPY` from S3 to Redshift (currently a manual SQL step, §2.3).
+- The FastAPI `/predict` endpoint (advanced/stretch, after ML starts).
+- Monthly reconciliation vs. the official HF release
+  (`monthly_reconcile` DAG).
 - Monthly reconciliation against the official Hugging Face release.

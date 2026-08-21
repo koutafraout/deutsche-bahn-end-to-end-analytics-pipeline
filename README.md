@@ -1,63 +1,60 @@
 #  Deutsche Bahn Operations Analytics Pipeline
 
-A scheduled, incremental-batch data platform that turns Deutsche Bahn historical and API delay data into tested, modeled station/line/time performance datasets for daily and monthly reporting.
+A batch data platform that turns Deutsche Bahn's delay data into a tested,
+modeled warehouse — surfaced through a daily/monthly performance dashboard.
 
-> **Status: v0.3 — Monthly pipeline landed through dbt staging.**
-> Hugging Face → S3 Bronze → Great Expectations → Redshift Serverless →
-> dbt staging is implemented and validated end to end for January–July
-> 2026 (101,702,091 rows). See [Status](#status) below for what's next.
+> **Status: monthly pipeline live end-to-end, orchestrated by Airflow.**
+> Hugging Face → S3 (Bronze) → Great Expectations → Redshift Serverless →
+> dbt (staging → intermediate → Gold marts) → Metabase dashboard, all
+> scheduled by an Airflow DAG. Validated on 101.7M rows
+> (January–July 2026). See [Status](#status) for what's next.
 
 ---
 
 ## Problem statement
 
-Deutsche Bahn publishes both a monthly historical delay archive (Hugging
-Face Parquet release) and a raw real-time API (`plan`/`fchg` payloads), but
-neither is analysis-ready on its own.
+Deutsche Bahn publishes delay data as a **poll-and-snapshot** feed: the
+same train stop can be captured multiple times as its delay and
+cancellation state evolve, so the raw data isn't analysis-ready on its
+own. This project builds a reproducible pipeline that turns those raw
+observations into validated, deduplicated, modeled datasets answering:
+*which stations and lines are delayed, how often, and how badly — daily
+and month over month.*
 
-The historical release behaves as a **poll-and-snapshot dataset**: the same
-train-stop can be captured repeatedly while its delay, timestamps, and
-cancellation state evolve. Therefore, the raw source grain is not the final
-business reporting grain.
-
-The project builds a reproducible data pipeline that transforms those raw
-observations into validated, deduplicated, modeled, and queryable railway
-performance datasets.
-
-The final platform is intended to support consistent delay reporting by:
-
-- station;
-- railway line / train category;
-- day and month;
-- delay and on-time performance;
-- cancellation behavior.
+**Built for:** transport planners (monthly trend reporting), operations
+teams (daily monitoring), and performance analysts (both).
 
 ---
 
-## Stakeholders
+## Architecture
 
-- **Transport planners** — monthly reporting to identify long-term delay
-  patterns, compare stations and lines, and support planning.
-- **Railway operations & performance teams** — daily reporting to monitor
-  recent delays/cancellations and investigate operational problems.
-- **Railway performance analysts** — both views, for operational
-  monitoring and trend analysis.
+Bronze → Silver → Gold (Medallion), scheduled batch, no streaming
+infrastructure — the data arrives on a monthly/6-hourly cadence, not
+continuously.
 
----
+```mermaid
+flowchart LR
+    A["Hugging Face\nmonthly Parquet release"] --> B["S3 Bronze\n(raw, immutable)"]
+    B --> C{"Great Expectations\nvalidation gate"}
+    C -->|pass| D["Redshift Serverless\nraw landing table"]
+    C -->|fail| X["Pipeline stops\nBronze left untouched"]
+    D --> E["dbt staging + intermediate\n(dedup, delay recompute)"]
+    E --> F["dbt Gold marts\n(station / line performance)"]
+    F --> G["Metabase dashboard"]
 
-## Data sources
+    O["Airflow"] -.orchestrates.-> B
+    O -.-> C
+    O -.-> D
+    O -.-> E
+    O -.-> F
 
-- **Monthly historical archive** — [`piebro/deutsche-bahn-data`](https://huggingface.co/datasets/piebro/deutsche-bahn-data)
-  on Hugging Face, a monthly Parquet release, 17 columns, CC BY 4.0,
-  Germany-wide, available from July 2024 onward. Currently landed and
-  loaded for January–July 2026 (101,702,091 rows). This is the pipeline's
-  historical reporting source and future reconciliation reference.
-- **Raw Deutsche Bahn API** (`plan` + `fchg`, ~6-hourly) — planned, not yet
-  implemented.
+    style X fill:#f8d7da,stroke:#c0392b,color:#611a15
+```
 
-Schema details, the source-grain finding (one row = one snapshot, not one
-final state), and the full ingestion pipeline are documented in
-[docs/architecture.md](docs/architecture.md).
+This is the simplified, implemented picture. Full diagrams (including the
+target architecture once the raw-API/daily leg is added), the reasoning
+behind every tool choice, and known data-quality realities baked into the
+design are in **[docs/architecture.md](docs/architecture.md)**.
 
 ---
 
@@ -66,36 +63,33 @@ final state), and the full ingestion pipeline are documented in
 | Component | Status |
 |---|---|
 | Monthly ingestion → S3 Bronze → Great Expectations → Redshift | ✅ Implemented |
-| dbt staging (`stg_monthly_observations`) | ✅ Implemented |
-| dbt intermediate + Gold marts | 🔜 Next |
-| Raw API ingestion, structural parser | ⏳ Planned |
-| Airflow orchestration | ⏳ Planned |
-| FastAPI + Streamlit dashboard | ⏳ Planned |
-| ML delay prediction | ⏳ Advanced / stretch |
-
-See [docs/architecture.md](docs/architecture.md) for the implemented vs.
-target architecture, and [docs/adr/](docs/adr/) for why each tool was
-chosen.
+| dbt staging → intermediate → Gold marts (station/line performance) | ✅ Implemented |
+| Metabase dashboard (reads Gold marts directly) | ✅ Implemented |
+| Airflow orchestration (monthly pipeline, end-to-end) | ✅ Implemented |
+| Raw API ingestion (6-hourly), structural parser (Spark) | ⏳ Planned |
+| Monthly reconciliation vs. official HF release | ⏳ Planned |
+| ML delay prediction | ⏳ Advanced / stretch, after reporting is solid |
 
 ---
 
-## Local dashboard development (cost control)
+## Cost engineering: staying inside the AWS credit
 
-Iterating on the Metabase dashboard (adding cards, tweaking filters,
-re-running the setup script) means Metabase — and often Redshift
-Serverless behind it — churns on every save/sync. That drove up compute
-cost against the project's $160 AWS credit during dashboard development,
-since Redshift Serverless resumes from auto-pause on every query.
+The project runs on a **$160 AWS credit**. Redshift Serverless bills by
+usage and auto-pauses when idle, which fits a monthly/6-hourly batch
+cadence — but it *resumes* on every query it receives, including every
+Metabase dashboard sync and every card edit made while iterating on
+layout. That churn during dashboard development pushed actual spend to
+**~$214**, over budget.
 
-**Solution:** mirror the Gold marts into a local Postgres container
-(`docker compose up -d postgres`) and point Metabase's database
-connection at it while doing dashboard/layout work, instead of hitting
-Redshift Serverless directly. Full runbook, including the Redshift
-quirks hit along the way (`COPY` has no `TO STDOUT`, `information_schema`
-unsupported on Redshift Serverless), in
-[dashboard/local-postgres-mirror.md](dashboard/local-postgres-mirror.md).
-The production dashboard still reads Redshift Gold marts directly — this
-mirror is dev-only, not part of the pipeline.
+**Fix:** a local Postgres container (already wired into
+`docker-compose.yml`) mirrors the Gold marts, and Metabase is pointed at
+it while iterating on dashboard layout/filters — Redshift Serverless is
+only touched by the scheduled pipeline and for final verification. This
+is why a Postgres service sits alongside Redshift in this repo: it's a
+disposable, local copy of Gold, not a second warehouse (Redshift
+Serverless is still the only warehouse target — see
+[ADR: Redshift Serverless as warehouse](docs/adr/0002-redshift-serverless-as-warehouse.md)).
+Full mirroring runbook: [dashboard/local-postgres-mirror.md](dashboard/local-postgres-mirror.md).
 
 ---
 
@@ -108,70 +102,45 @@ mirror is dev-only, not part of the pipeline.
 | Bronze validation | Great Expectations |
 | Warehouse | Redshift Serverless |
 | Transformations | dbt (`dbt-redshift`) |
-| Local profiling | PySpark, JupyterLab (Docker) |
+| Orchestration | Airflow (Docker) |
+| Dashboard | Metabase, reading Gold marts directly |
+| Local dev mirror | Postgres (Docker, dashboard iteration only) |
+| Testing | pytest, dbt tests |
 | Dependency management | uv |
-| Testing | pytest |
 
-Planned, not yet implemented: Airflow (orchestration), FastAPI (reporting
-API), Streamlit (dashboard). See [docs/architecture.md](docs/architecture.md)
-for the full target architecture.
+Planned, not yet implemented: raw API ingestion, Spark structural
+parser, monthly reconciliation, ML delay prediction. Full rationale for
+every tool choice: [docs/architecture.md](docs/architecture.md#4-why-each-tool-was-chosen).
 
 ---
 
-## Setup
+## Quickstart
 
 **Prerequisites:** Python 3.11, [`uv`](https://docs.astral.sh/uv/), Docker
 + Docker Compose, an AWS account with an S3 bucket and a Redshift
-Serverless workgroup reachable from your machine.
+Serverless workgroup.
 
-1. Install dependencies:
+```bash
+# 1. Install dependencies
+uv sync --extra ingestion --extra quality --extra warehouse --extra dev
 
-   ```bash
-   uv sync --extra ingestion --extra quality --extra warehouse --extra dev
-   ```
+# 2. Configure environment
+cp .env.example .env   # fill in AWS/Redshift credentials
 
-2. Configure environment variables:
+# 3. Bring up orchestration (Airflow) and, optionally, the local Postgres mirror
+docker compose up -d
 
-   ```bash
-   cp .env.example .env
-   # fill in your S3 bucket, AWS credentials, and Redshift connection details
-   ```
+# 4. Trigger the monthly pipeline (land → validate → load → dbt build)
+#    via the Airflow UI at http://localhost:8080, DAG `db_monthly_pipeline`,
+#    or run each step by hand — see docs/runbook.md
 
-3. Land a month of historical data in Bronze:
-
-   ```bash
-   uv run python -m ingestion.monthly_load.main --month 2026-07
-   ```
-
-4. Validate it:
-
-   ```bash
-   uv run python -m quality.bronze_monthly.validate --month 2026-07
-   ```
-
-5. Load it into Redshift and build the warehouse:
-
-   ```bash
-   uv run python -m warehouse.redshift_load.main --month 2026-07
-   cd warehouse/dbt && uv run dbt build
-   ```
-
-6. (Optional) Start the local Spark/Jupyter profiling environment — opt-in,
-   not part of the pipeline, so it needs its own Compose profile:
-
-   ```bash
-   docker compose --profile profiling up -d
-   ```
-
-   Historical data assessment notebooks live under
-   `notebooks/data-assessment/monthly_catalog_profiling/`.
+# 5. Build the Metabase dashboard against the Gold marts
+docker compose up -d metabase
+uv run python dashboard/setup_metabase.py
+```
 
 Full operational detail — failure handling, required Redshift grants,
 troubleshooting — is in [docs/runbook.md](docs/runbook.md).
-
-Production orchestration with Airflow is not yet implemented; the current
-pipeline components are being validated individually before orchestration is
-added.
 
 ---
 
@@ -181,7 +150,10 @@ added.
   diagrams, and tool choices
 - [docs/runbook.md](docs/runbook.md) — operational manual: running the
   pipeline, handling failures, managing the environment
-- [docs/adr/](docs/adr/) — architecture decision records
+- [docs/adr/](docs/adr/) and [docs/decisions/](docs/decisions/) —
+  architecture decision records
+- [dashboard/local-postgres-mirror.md](dashboard/local-postgres-mirror.md) —
+  the Redshift-cost workaround described above, in full
 
-This README evolves with the actual implementation rather than documenting
-components that have not yet been built.
+This README evolves with the actual implementation rather than
+documenting components that have not yet been built.
