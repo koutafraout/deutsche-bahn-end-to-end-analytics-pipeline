@@ -30,31 +30,37 @@ teams (daily monitoring), and performance analysts (both).
 
 Bronze → Silver → Gold (Medallion), scheduled batch, no streaming
 infrastructure — the data arrives on a monthly/6-hourly cadence, not
-continuously.
+continuously. This is the currently implemented path (running code, not
+a plan):
 
 ```mermaid
-flowchart LR
-    A["Hugging Face\nmonthly Parquet release"] --> B["S3 Bronze\n(raw, immutable)"]
-    B --> C{"Great Expectations\nvalidation gate"}
-    C -->|pass| D["Redshift Serverless\nraw landing table"]
-    C -->|fail| X["Pipeline stops\nBronze left untouched"]
-    D --> E["dbt staging + intermediate\n(dedup, delay recompute)"]
-    E --> F["dbt Gold marts\n(station / line performance)"]
-    F --> G["Metabase dashboard"]
-
-    O["Airflow"] -.orchestrates.-> B
-    O -.-> C
-    O -.-> D
-    O -.-> E
-    O -.-> F
+flowchart TD
+    A["Hugging Face<br/>monthly_processed_data/data-YYYY-MM.parquet"]
+    A -->|"ingestion/monthly_load<br/>(Python: boto3 + huggingface_hub)"| B
+    B["S3 Bronze<br/>bronze/monthly-raw/year=YYYY/month=MM/<br/>raw Parquet, byte-for-byte, skip-if-exists"]
+    B -->|"quality/bronze_monthly<br/>(Great Expectations)"| C
+    C{"Bronze validation gate"}
+    C -->|FAIL| X["Stop pipeline<br/>log · keep Bronze object · no COPY<br/>investigate / reprocess"]
+    C -->|PASS| D
+    D["Redshift Serverless<br/>COPY ... FORMAT AS PARQUET (warehouse/redshift_load)<br/>dev.db_monthly.raw_observations"]
+    D -->|"dbt (warehouse/dbt)"| E
+    E["dbt staging<br/>stg_monthly_observations<br/>rename/cast only"]
+    E --> F["dbt intermediate<br/>int_observations_unioned → deduped → enriched"]
+    F --> G["Gold marts<br/>dim_station · dim_train_line · dim_service_month<br/>mart_monthly_station_perf · mart_monthly_line_perf"]
+    G --> H["Metabase dashboard<br/>(dashboard/setup_metabase.py)"]
 
     style X fill:#f8d7da,stroke:#c0392b,color:#611a15
 ```
 
-This is the simplified, implemented picture. Full diagrams (including the
-target architecture once the raw-API/daily leg is added), the reasoning
-behind every tool choice, and known data-quality realities baked into the
-design are in **[docs/architecture.md](docs/architecture.md)**.
+**Orchestration:** every step above runs end-to-end as one Airflow DAG
+(`db_monthly_pipeline`), scheduled monthly.
+
+![Airflow DAG: db_monthly_pipeline](docs/db_montly_pipeline_airflow.png)
+
+Full diagrams (including the target architecture once the raw-API/daily
+leg is added), the reasoning behind every tool choice, and known
+data-quality realities baked into the design are in
+**[docs/architecture.md](docs/architecture.md)**.
 
 ---
 
