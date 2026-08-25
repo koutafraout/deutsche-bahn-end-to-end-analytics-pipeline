@@ -1,4 +1,4 @@
-#  Deutsche Bahn Operations Analytics Pipeline
+# Deutsche Bahn End-to-End Analytics Pipeline
 
 A batch data platform that turns Deutsche Bahn's delay data into a tested,
 modeled warehouse, surfaced through a daily/monthly performance dashboard.
@@ -32,23 +32,14 @@ Typical questions:
 
 ---
 
-## Key profiling insights
-
-- **Schema stability:** all seven months use the same 17-column schema, with no observed schema drift.
-- **Legitimate negative delays:** early departures and arrivals appear as negative delays and should not be treated as data errors.
-- **Structural nulls:** missing values are often explained by railway semantics rather than poor data quality.
-- **Train-type dependency:** `line_number` is systematically null for several long-distance train types, such as ICE, IC, and EC.
-- **Arrival/departure structure:** around 7 to 8% of arrival or departure timestamps are null, but every observation contains at least one planned event.
-- **Profiling outcome:** profiling converted raw-data behavior into evidence-based transformation and data-quality rules for the pipeline.
-
----
-
 ## Architecture
 
 Bronze → Silver → Gold (Medallion), scheduled batch, no streaming
 infrastructure (the data arrives on a monthly/6-hourly cadence, not
-continuously). This is the currently implemented path (running code,
-not a plan):
+continuously). Bronze holds raw data unchanged, Silver cleans and
+models it (dbt staging and intermediate), and Gold serves the finished
+marts to the dashboard. This is the currently implemented path (running
+code, not a plan):
 
 ![Medallion architecture: Hugging Face to S3 Bronze, through a Great Expectations pass/fail gate, into Redshift and dbt staging/intermediate/marts, out to Metabase, orchestrated monthly by Airflow](docs/Medallion-Architecture.png)
 
@@ -61,6 +52,52 @@ For the full pipeline diagrams (including the target architecture once
 the raw-API/daily leg is added), the reasoning behind every tool choice,
 and known data-quality realities baked into the design, see
 **[docs/architecture.md](docs/architecture.md)**.
+
+---
+
+## Key profiling insights
+
+Before any dbt model was written, the raw monthly data was profiled end
+to end. That work shaped every transformation and data-quality rule in
+the Silver layer above:
+
+- **Schema stability:** all seven months use the same 17-column schema, with no observed schema drift.
+- **Legitimate negative delays:** early departures and arrivals appear as negative delays and should not be treated as data errors.
+- **Structural nulls:** missing values are often explained by railway semantics rather than poor data quality.
+- **Train-type dependency:** `line_number` is systematically null for several long-distance train types, such as ICE, IC, and EC.
+- **Arrival/departure structure:** around 7 to 8% of arrival or departure timestamps are null, but every observation contains at least one planned event.
+- **Profiling outcome:** profiling converted raw-data behavior into evidence-based transformation and data-quality rules for the pipeline.
+
+---
+
+## Status
+
+| Component | Status |
+|---|:---:|
+| Monthly ingestion → S3 Bronze → Great Expectations → Redshift | ✅ Implemented |
+| dbt staging → intermediate → Gold marts (station/line performance) | ✅ Implemented |
+| Metabase dashboard (reads Gold marts directly) | ✅ Implemented |
+| Airflow orchestration (monthly pipeline, end to end) | ✅ Implemented |
+| Raw API ingestion (6-hourly), structural parser (Spark) | ⏳ Planned |
+| Monthly reconciliation vs. official HF release | ⏳ Planned |
+| ML delay prediction | ⏳ Advanced/stretch |
+
+### Data scale
+
+- 101,702,091 observations
+- 7 monthly files (Jan to Jul 2026)
+- 212 service days
+- ~5,453 EVA station codes
+- stable 17-column schema, zero observed drift
+
+### Quality gates
+
+- 33 pytest tests (parsers, SQL builders)
+- 5 Great Expectations checks (Bronze structural gate)
+- 50 dbt tests (staging through Gold)
+
+Every threshold traces back to the profiling evidence above, not a
+guessed bound.
 
 ---
 
@@ -120,37 +157,6 @@ Metabase development
 ```
 
 Full mirroring runbook: [dashboard/local-postgres-mirror.md](dashboard/local-postgres-mirror.md).
-
----
-
-## Status
-
-| Component | Status |
-|---|:---:|
-| Monthly ingestion → S3 Bronze → Great Expectations → Redshift | ✅ Implemented |
-| dbt staging → intermediate → Gold marts (station/line performance) | ✅ Implemented |
-| Metabase dashboard (reads Gold marts directly) | ✅ Implemented |
-| Airflow orchestration (monthly pipeline, end to end) | ✅ Implemented |
-| Raw API ingestion (6-hourly), structural parser (Spark) | ⏳ Planned |
-| Monthly reconciliation vs. official HF release | ⏳ Planned |
-| ML delay prediction | ⏳ Advanced/stretch |
-
-### Data scale
-
-- 101,702,091 observations
-- 7 monthly files (Jan to Jul 2026)
-- 212 service days
-- ~5,453 EVA station codes
-- stable 17-column schema, zero observed drift
-
-### Quality gates
-
-- 33 pytest tests (parsers, SQL builders)
-- 5 Great Expectations checks (Bronze structural gate)
-- 50 dbt tests (staging through Gold)
-
-Every threshold traces back to the profiling evidence above, not a
-guessed bound.
 
 ---
 
