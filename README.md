@@ -17,24 +17,32 @@ Deutsche Bahn publishes delay data as a **poll-and-snapshot** feed: the
 same train stop can be captured multiple times as its delay and
 cancellation state evolve, so the raw data isn't analysis-ready on its
 own. This project builds a reproducible pipeline that turns those raw
-observations into validated, deduplicated, modeled datasets answering:
-*which stations and lines are delayed, how often, and how badly — daily
-and month over month.*
+observations into validated, deduplicated, modeled datasets answering
+which stations and lines are delayed, how often, and how badly (daily
+and month over month).
 
-**Built for:** transport planners (monthly trend reporting), operations
-teams (daily monitoring), and performance analysts (both) — answering
-questions like *which stations see the most delay, which lines cancel
-most often, and is performance improving or deteriorating month over
-month.*
+### Built for
 
-### Key profiling insights
+- **Transport planners:** monthly trend reporting
+- **Operations teams:** daily monitoring
+- **Performance analysts:** both
 
-- **Schema stability** — all seven months use the same 17-column schema, with no observed schema drift.
-- **Legitimate negative delays** — early departures and arrivals appear as negative delays and should not be treated as data errors.
-- **Structural nulls** — missing values are often explained by railway semantics rather than poor data quality.
-- **Train-type dependency** — `line_number` is systematically null for several long-distance train types, such as ICE, IC, and EC.
-- **Arrival/departure structure** — around 7–8% of arrival or departure timestamps are null, but every observation contains at least one planned event.
-- **Profiling outcome** — profiling converted raw-data behavior into evidence-based transformation and data-quality rules for the pipeline.
+Typical questions:
+
+- Which stations see the most delay?
+- Which lines cancel most often?
+- Is performance improving or deteriorating month over month?
+
+---
+
+## Key profiling insights
+
+- **Schema stability:** all seven months use the same 17-column schema, with no observed schema drift.
+- **Legitimate negative delays:** early departures and arrivals appear as negative delays and should not be treated as data errors.
+- **Structural nulls:** missing values are often explained by railway semantics rather than poor data quality.
+- **Train-type dependency:** `line_number` is systematically null for several long-distance train types, such as ICE, IC, and EC.
+- **Arrival/departure structure:** around 7 to 8% of arrival or departure timestamps are null, but every observation contains at least one planned event.
+- **Profiling outcome:** profiling converted raw-data behavior into evidence-based transformation and data-quality rules for the pipeline.
 
 ---
 
@@ -66,19 +74,27 @@ and known data-quality realities baked into the design, see
 | Monthly ingestion → S3 Bronze → Great Expectations → Redshift | ✅ Implemented |
 | dbt staging → intermediate → Gold marts (station/line performance) | ✅ Implemented |
 | Metabase dashboard (reads Gold marts directly) | ✅ Implemented |
-| Airflow orchestration (monthly pipeline, end-to-end) | ✅ Implemented |
+| Airflow orchestration (monthly pipeline, end to end) | ✅ Implemented |
 | Raw API ingestion (6-hourly), structural parser (Spark) | ⏳ Planned |
 | Monthly reconciliation vs. official HF release | ⏳ Planned |
-| ML delay prediction | ⏳ Advanced / stretch, after reporting is solid |
+| ML delay prediction | ⏳ Advanced/stretch |
 
-**Data scale:** 101,702,091 observations · 7 monthly files (Jan–Jul
-2026) · 212 service days · ~5,453 EVA station codes · a stable
-17-column schema with zero observed drift across the window.
+### Data scale
 
-**Quality gates:** 33 pytest tests (parsers/SQL builders) · 5 Great
-Expectations checks (Bronze structural gate) · 50 dbt tests (staging
-through Gold) — every threshold traces back to the profiling evidence
-above, not a guessed bound.
+- 101,702,091 observations
+- 7 monthly files (Jan to Jul 2026)
+- 212 service days
+- ~5,453 EVA station codes
+- stable 17-column schema, zero observed drift
+
+### Quality gates
+
+- 33 pytest tests (parsers, SQL builders)
+- 5 Great Expectations checks (Bronze structural gate)
+- 50 dbt tests (staging through Gold)
+
+Every threshold traces back to the profiling evidence above, not a
+guessed bound.
 
 ---
 
