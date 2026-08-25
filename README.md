@@ -1,13 +1,10 @@
 #  Deutsche Bahn Operations Analytics Pipeline
 
 A batch data platform that turns Deutsche Bahn's delay data into a tested,
-modeled warehouse — surfaced through a daily/monthly performance dashboard.
+modeled warehouse, surfaced through a daily/monthly performance dashboard.
 
-> **Status: monthly pipeline live end-to-end, orchestrated by Airflow.**
-> Hugging Face → S3 (Bronze) → Great Expectations → Redshift Serverless →
-> dbt (staging → intermediate → Gold marts) → Metabase dashboard, all
-> scheduled by an Airflow DAG. Validated on 101.7M rows
-> (January–July 2026). See [Status](#status) for what's next.
+> **Status: monthly pipeline live end to end, orchestrated by Airflow.**
+> Validated on 101.7M rows (Jan to Jul 2026). See [Status](#status) for details.
 
 ---
 
@@ -98,32 +95,11 @@ guessed bound.
 
 ---
 
-## Gold analytics layer
-
-The dashboard and any future consumer (API, ML features) read these
-dbt models only — never Bronze or raw Parquet directly:
-
-```text
-dim_station               one row per station, keyed on eva
-dim_train_line             one row per (train_type, line_number)
-dim_service_month          calendar dimension for dashboard filters
-
-mart_monthly_station_perf  station-month delay / on-time / cancellation
-mart_monthly_line_perf     line-month delay / on-time / cancellation
-```
-
-Both marts expose observation count, average/median delay, on-time
-rate, cancellation rate, and an `eligible_for_ranking` flag (≥30
-observations) so a single-outlier station or line can't top a
-"worst performer" ranking.
-
----
-
 ## Dashboard
 
-The Gold marts are consumed by an interactive **Metabase dashboard**,
-built entirely by scripting Metabase's REST API
-(`dashboard/setup_metabase.py`).
+An interactive **Metabase dashboard**, built entirely by scripting
+Metabase's REST API (`dashboard/setup_metabase.py`), reads the Gold dbt
+models only, never Bronze or raw Parquet directly.
 
 ![Metabase dashboard: Overview, Stations Performance, and Service & Line Performance tabs, each showing delay/on-time/cancellation KPIs and monthly trend charts](docs/metabase-dashboard.png)
 
@@ -141,14 +117,15 @@ be added here for the final project presentation.
 
 ---
 
-## Cost engineering: staying inside the AWS credit
+## Cost engineering
 
-The project runs on a **$160 AWS credit**. Redshift Serverless bills by
-usage and auto-pauses when idle — but it *resumes* on every query it
-receives, including every Metabase dashboard sync and every card edit
-made while iterating on layout. That churn during dashboard development
-pushed spend as high as **~$215**, over budget, almost entirely from
-Redshift.
+Redshift Serverless cost averaged around **$215** during dashboard
+development, almost entirely from Redshift itself. The cause: Redshift
+Serverless bills by usage and auto-pauses when idle, but it *resumes*
+on every query it receives, including every Metabase dashboard sync and
+every card edit made while iterating on layout. That churn kept the
+warehouse resuming far more often than the actual monthly/6-hourly
+pipeline cadence needed.
 
 **Fixes:**
 
