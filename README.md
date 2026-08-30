@@ -107,9 +107,9 @@ An interactive **Metabase dashboard**, built entirely by scripting
 Metabase's REST API (`dashboard/setup_metabase.py`), reads the Gold dbt
 models only, never Bronze or raw Parquet directly.
 
-<video src="https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/raw/main/docs/dashboard-walkthrough.mp4" controls width="100%"></video>
+<video src="https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/releases/download/assets/dashboard-walkthrough.mp4" controls width="100%"></video>
 
-If the player does not load, [watch the dashboard walkthrough directly](docs/dashboard-walkthrough.mp4).
+If the player does not load, [watch the dashboard walkthrough here](https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/releases/download/assets/dashboard-walkthrough.mp4).
 
 - **Overview**: network-level KPIs and month-over-month trend.
 - **Stations**: per-station delay/on-time/cancellation, ranked and
