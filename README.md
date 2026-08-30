@@ -107,7 +107,9 @@ An interactive **Metabase dashboard**, built entirely by scripting
 Metabase's REST API (`dashboard/setup_metabase.py`), reads the Gold dbt
 models only, never Bronze or raw Parquet directly.
 
-![Metabase dashboard: Overview, Stations Performance, and Service & Line Performance tabs, each showing delay/on-time/cancellation KPIs and monthly trend charts](docs/metabase-dashboard.png)
+<video src="https://github.com/koutafraout/Capstone-Project-Transit-Ops-Delay-Prediction/raw/main/docs/dashboard-walkthrough.mp4" controls width="100%"></video>
+
+If the player does not load, [watch the dashboard walkthrough directly](docs/dashboard-walkthrough.mp4).
 
 - **Overview**: network-level KPIs and month-over-month trend.
 - **Stations**: per-station delay/on-time/cancellation, ranked and
@@ -117,9 +119,6 @@ models only, never Bronze or raw Parquet directly.
 
 Filters (year, month, station, train category, line) apply across all
 three tabs.
-
-**Video walkthrough coming soon.** A short dashboard demonstration will
-be added here for the final project presentation.
 
 ---
 
