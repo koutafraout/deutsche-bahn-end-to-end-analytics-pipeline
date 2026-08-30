@@ -55,6 +55,28 @@ and known data-quality realities baked into the design, see
 
 ---
 
+## Dashboard
+
+An interactive **Metabase dashboard**, built entirely by scripting
+Metabase's REST API (`dashboard/setup_metabase.py`), reads the Gold dbt
+models only, never Bronze or raw Parquet directly.
+
+![Metabase dashboard: Overview, Stations Performance, and Service & Line Performance tabs, each showing delay/on-time/cancellation KPIs and monthly trend charts](docs/metabase-dashboard.png)
+
+- **Overview**: network-level KPIs and month-over-month trend.
+- **Stations**: per-station delay/on-time/cancellation, ranked and
+  compared against the network average.
+- **Service & Line**: the same metrics sliced by train category and
+  line.
+
+Filters (year, month, station, train category, line) apply across all
+three tabs.
+
+A short screen-recorded [dashboard walkthrough](https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/releases/download/assets/dashboard-walkthrough.mp4)
+is available as a release asset.
+
+---
+
 ## Key profiling insights
 
 Before any dbt model was written, the raw monthly data was profiled end
@@ -98,27 +120,6 @@ the Silver layer above:
 
 Every threshold traces back to the profiling evidence above, not a
 guessed bound.
-
----
-
-## Dashboard
-
-An interactive **Metabase dashboard**, built entirely by scripting
-Metabase's REST API (`dashboard/setup_metabase.py`), reads the Gold dbt
-models only, never Bronze or raw Parquet directly.
-
-<video src="https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/releases/download/assets/dashboard-walkthrough.mp4" controls width="100%"></video>
-
-If the player does not load, [watch the dashboard walkthrough here](https://github.com/koutafraout/deutsche-bahn-end-to-end-analytics-pipeline/releases/download/assets/dashboard-walkthrough.mp4).
-
-- **Overview**: network-level KPIs and month-over-month trend.
-- **Stations**: per-station delay/on-time/cancellation, ranked and
-  compared against the network average.
-- **Service & Line**: the same metrics sliced by train category and
-  line.
-
-Filters (year, month, station, train category, line) apply across all
-three tabs.
 
 ---
 
